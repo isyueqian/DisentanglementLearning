@@ -337,6 +337,7 @@ def build_unsup_sets():
         stack = []
         for subdir in subdir_list:
             # folder_name = subdir.rsplit('/')[-1]
+            # # Linux only need to revise .rsplit part
             folder_name = subdir.rsplit('\\')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
@@ -383,8 +384,7 @@ def build_sup_sets():
                 prefix = os.path.join(root_dir, folder_name)
                 pt_number = folder_name.split('patient')[1]
 
-                # ed, es, _, _, _, _ = parse_info_cfg(prefix + '/Info.cfg')
-                ed, es, _, _, _, _ = parse_info_cfg(prefix + '\Info.cfg')
+                ed, es, _, _, _, _ = parse_info_cfg(prefix + '/Info.cfg')
                 pt_ed_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}.nii.gz'.format(str(ed).zfill(2)))
                 pt_es_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}.nii.gz'.format(str(es).zfill(2)))
                 pt_ed_mask_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt.nii.gz'.format(str(ed).zfill(2)))
@@ -446,7 +446,6 @@ def build_disc_sets():
                 pt_number = folder_name.split('patient')[1]
 
                 ed, es, _, _, _, _ = parse_info_cfg(prefix + '/Info.cfg')
-                # ed, es, _, _, _, _ = parse_info_cfg(prefix + '\Info.cfg')
                 pt_ed_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}.nii.gz'.format(str(ed).zfill(2)))
                 pt_es_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}.nii.gz'.format(str(es).zfill(2)))
                 pt_ed_mask_full_path = os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt.nii.gz'.format(str(ed).zfill(2)))
@@ -489,11 +488,10 @@ def build_disc_sets():
 def main():
     print('\nBuilding SUPERVISED sets.')
     # build_sup_sets()
-
     print('\nBuilding UNSUPERVISED sets.')
-    # build_unsup_sets()
+    build_unsup_sets()
     print('\nBuilding DISCRIMINATOR sets.')
-    build_disc_sets()
+    # build_disc_sets()
 
     print_yellow_text('\nDone.\n', sep=False)
 

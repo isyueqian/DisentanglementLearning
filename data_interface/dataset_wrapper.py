@@ -59,7 +59,6 @@ class DatasetInterfaceWrapper(object):
             num_threads=self.num_threads,
             seed=seed
         )
-
         return train_init, valid_init, test_init, input_data, output_data
 
     def get_acdc_disc_data(self, data_path, repeat=False, seed=None):

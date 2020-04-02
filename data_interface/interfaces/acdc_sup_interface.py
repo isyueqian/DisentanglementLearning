@@ -24,6 +24,7 @@ from idas.utils import get_available_gpus
 import os
 from math import pi
 from idas.utils import print_yellow_text
+import sys
 
 
 class DatasetInterface(object):
@@ -40,6 +41,8 @@ class DatasetInterface(object):
         self.y_train = np.load(os.path.join(root_dir, 'preprocessed/{0}/sup_mask_{0}.npy'.format('train')))
         self.x_validation = np.load(os.path.join(root_dir, 'preprocessed/{0}/sup_{0}.npy'.format('validation')))
         self.y_validation = np.load(os.path.join(root_dir, 'preprocessed/{0}/sup_mask_{0}.npy'.format('validation')))
+        self.x_test = np.load(os.path.join(root_dir, 'preprocessed/{0}/sup_{0}.npy'.format('test')))
+        self.y_test = np.load(os.path.join(root_dir, 'preprocessed/{0}/sup_mask_{0}.npy'.format('test')))
 
         # self.x_train, self.y_train = self._undersample(self.x_train, self.y_train)
         # self.x_validation, self.y_validation = self._undersample(self.x_validation, self.y_validation)
@@ -86,9 +89,12 @@ class DatasetInterface(object):
             _train_masks = tf.constant(self.y_train, dtype=tf.float32)
             _valid_images = tf.constant(self.x_validation, dtype=tf.float32)
             _valid_masks = tf.constant(self.y_validation, dtype=tf.float32)
+            _test_images = tf.constant(self.x_test, dtype=tf.float32)
+            _test_masks = tf.constant(self.y_test, dtype=tf.float32)
 
             train_data = tf.data.Dataset.from_tensor_slices((_train_images, _train_masks))
             valid_data = tf.data.Dataset.from_tensor_slices((_valid_images, _valid_masks))
+            test_data = tf.data.Dataset.from_tensor_slices((_test_images, _test_masks))
 
             if standardize:
                 print("Data won't be standardized, as they already have been pre-processed.")
@@ -104,6 +110,7 @@ class DatasetInterface(object):
 
             train_data = train_data.batch(b_size, drop_remainder=True)
             valid_data = valid_data.batch(b_size, drop_remainder=True)
+            test_data = test_data.batch(b_size, drop_remainder=True)
 
             # if len(get_available_gpus()) > 0:
             #     # prefetch data to the GPU
@@ -114,7 +121,8 @@ class DatasetInterface(object):
 
             _input_data, _output_data = iterator.get_next()
             train_init = iterator.make_initializer(train_data)  # initializer for train_data
-            valid_init = iterator.make_initializer(valid_data)  # initializer for test_data
+            valid_init = iterator.make_initializer(valid_data)  # initializer for valid_data
+            test_init = iterator.make_initializer(test_data)
 
             with tf.name_scope('input_sup'):
                 input_data = tf.reshape(_input_data, shape=[-1, self.input_size[0], self.input_size[1], 1])
@@ -124,4 +132,4 @@ class DatasetInterface(object):
                 output_data = tf.reshape(_output_data, shape=[-1, self.input_size[0], self.input_size[1], 4])
                 output_data = tf.cast(output_data, tf.float32)
 
-            return train_init, valid_init, input_data, output_data
+            return train_init, valid_init, test_init, input_data, output_data

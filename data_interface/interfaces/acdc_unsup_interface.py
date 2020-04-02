@@ -25,6 +25,7 @@ import os
 from glob import glob
 import cv2
 from idas.utils import print_yellow_text
+import sys
 
 
 class DatasetInterface(object):
@@ -38,7 +39,7 @@ class DatasetInterface(object):
         self.input_size = input_size
 
         path_dict = dict()
-        for d_set in ['train', 'validation']:
+        for d_set in ['train_unsup', 'validation']:
             path_list = []
 
             data_dir = root_dir + '/{0}'.format(d_set)
@@ -46,7 +47,9 @@ class DatasetInterface(object):
             subdir_list = [d[:-1] for d in glob(data_dir + suffix)]
 
             for subdir in subdir_list:
-                folder_name = subdir.rsplit('/')[-1]
+                # folder_name = subdir.rsplit('/')[-1]
+                # # in Linux
+                folder_name = subdir.rsplit('\\')[-1]
                 if folder_name.startswith('patient'):
                     prefix = os.path.join(data_dir, folder_name)
                     pt_number = folder_name.split('patient')[1]
@@ -55,7 +58,7 @@ class DatasetInterface(object):
 
             path_dict[d_set] = path_list
 
-        self.x_train_paths = path_dict['train']
+        self.x_train_paths = path_dict['train_unsup']
         self.x_validation_paths = path_dict['validation']
 
     @staticmethod
