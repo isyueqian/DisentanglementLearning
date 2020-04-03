@@ -75,17 +75,16 @@ if __name__ == '__main__':
             os.makedirs(root + dset)
         except FileExistsError:
             # os.system('rm -rf {0}'.format(root + dset))
-            # # is in Linux
             shutil.rmtree(root + dset)
             os.makedirs(root + dset)
         ids = splits_ids[dset]
         ids_list = [str(el).zfill(3) for el in ids]
-        # path_list = [el for el in subdir_list if el.rsplit('/patient')[-1] in ids_list]
-        path_list = [el for el in subdir_list if el.rsplit('\patient')[-1] in ids_list]
+        path_list = [el for el in subdir_list if el.rsplit('/patient')[-1] in ids_list]
+        # path_list = [el for el in subdir_list if el.rsplit('\patient')[-1] in ids_list]
         for _dir in path_list:
-            # print('cp -r {0} {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
-            # os.system('cp -r {0} {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
-            print('copyfile {0} to {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
-            shutil.copytree(_dir, '{0}/{1}/{2}/'.format(root, dset, _dir.split('\\')[-1]))
+            print('cp -r {0} {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
+            os.system('cp -r {0} {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
+            # print('copyfile {0} to {1}'.format(_dir, '{0}{1}/'.format(root, dset)))
+            # shutil.copytree(_dir, '{0}/{1}/{2}/'.format(root, dset, _dir.split('\\')[-1]))
 
     print_yellow_text('Done.\n', sep=False)

@@ -32,7 +32,6 @@ import os
 import cv2
 import tensorflow as tf
 from sklearn.utils import shuffle
-import sys
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -336,9 +335,7 @@ def build_unsup_sets():
 
         stack = []
         for subdir in subdir_list:
-            # folder_name = subdir.rsplit('/')[-1]
-            # # Linux only need to revise .rsplit part
-            folder_name = subdir.rsplit('\\')[-1]
+            folder_name = subdir.rsplit('/')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
                 pt_number = folder_name.split('patient')[1]
@@ -378,8 +375,7 @@ def build_sup_sets():
         stack = []
         stack_masks = []
         for subdir in subdir_list:
-            # folder_name = subdir.rsplit('/')[-1]
-            folder_name = subdir.rsplit('\\')[-1]
+            folder_name = subdir.rsplit('/')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
                 pt_number = folder_name.split('patient')[1]
@@ -439,8 +435,7 @@ def build_disc_sets():
         stack = []
         stack_masks = []
         for subdir in subdir_list:
-            # folder_name = subdir.rsplit('/')[-1]
-            folder_name = subdir.rsplit('\\')[-1]
+            folder_name = subdir.rsplit('/')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
                 pt_number = folder_name.split('patient')[1]
@@ -487,7 +482,7 @@ def build_disc_sets():
 
 def main():
     print('\nBuilding SUPERVISED sets.')
-    # build_sup_sets()
+    build_sup_sets()
     print('\nBuilding UNSUPERVISED sets.')
     build_unsup_sets()
     print('\nBuilding DISCRIMINATOR sets.')

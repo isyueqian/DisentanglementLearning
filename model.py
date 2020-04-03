@@ -478,10 +478,10 @@ class Model(DatasetInterfaceWrapper):
     def _eval_all_op(self, sess, writer, step):
         sl, d3chl, usl, sup_sc_summ, sup_im_summ, sunup_sc_summ, = \
             sess.run([self.sup_loss, self.dice_3chs, self.unsup_loss,
-                                                     self.sup_valid_scalar_summary_op,
-                                                     self.sup_valid_images_summary_op,
-                                                     self.unsup_valid_scalar_summary_op],
-                                                     feed_dict={self.is_training: False})
+                      self.sup_valid_scalar_summary_op,
+                      self.sup_valid_images_summary_op,
+                      self.unsup_valid_scalar_summary_op],
+                     feed_dict={self.is_training: False})
         writer.add_summary(sup_sc_summ, global_step=step)
         writer.add_summary(sup_im_summ, global_step=step)
         writer.add_summary(sunup_sc_summ, global_step=step)
