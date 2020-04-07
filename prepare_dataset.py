@@ -32,6 +32,7 @@ import os
 import cv2
 import tensorflow as tf
 from sklearn.utils import shuffle
+import sys
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -311,7 +312,7 @@ def mask_pre_processing_pipeline(filename):
     size = (img_width, img_height)
     img_array = crop_or_pad_slice_center(img_array, new_size=size, value=0)
 
-    # 8b. undersample and make 64x64
+    # 8b. undersample and make final shape
     img_array = resize_2d_slices(img_array, new_size=final_shape, interpolation=cv2.INTER_NEAREST)
     img_array = crop_or_pad_slice_center(img_array, new_size=final_shape, value=0)
 
@@ -343,10 +344,21 @@ def build_unsup_sets():
 
                 # Pre-process image and add to the stack
                 img_array = slice_pre_processing_pipeline(pt_full_path)
+                # print(pt_number)
+                # print("after processing: ", img_array.shape)
                 img_array = np.expand_dims(img_array, -1)
+                # print("after expand: ", img_array.shape)
 
                 np.save(os.path.join(prefix, 'patient' + pt_number + '_4d_preproc.npy'), img_array)
                 stack.extend(img_array)
+                # print("Length after extending: ", len(stack))
+                # sys.exit()
+                """
+                019
+                after processing:  (330, 128, 128)
+                after expand:  (330, 128, 128, 1)
+                Length after extending:  330
+                """
 
         # define array
         stack_array = np.array(stack)
@@ -388,8 +400,22 @@ def build_sup_sets():
 
                 # Pre-process image and add to the stack
                 img_array = slice_pre_processing_pipeline(pt_ed_full_path)
+                # print(pt_number)
+                # print("after processing: ", img_array.shape)
                 img_array = np.expand_dims(img_array, -1)
+                # print("after expanding: ", img_array.shape)
                 stack.extend(img_array)
+                # print("length of stack: ", len(stack))
+                # print("after extend: ", stack[0].shape)
+                # sys.exit()
+                """
+                019
+                after processing:  (11, 128, 128)
+                after expanding:  (11, 128, 128, 1)
+                length of stack:  11
+                after extend:  (128, 128, 1)
+                """
+
                 mask = mask_pre_processing_pipeline(pt_ed_mask_full_path)
                 stack_masks.extend(mask)
 
@@ -482,7 +508,7 @@ def build_disc_sets():
 
 def main():
     print('\nBuilding SUPERVISED sets.')
-    build_sup_sets()
+    # build_sup_sets()
     print('\nBuilding UNSUPERVISED sets.')
     build_unsup_sets()
     print('\nBuilding DISCRIMINATOR sets.')

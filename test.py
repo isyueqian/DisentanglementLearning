@@ -18,8 +18,8 @@ For the test the pre-trained model
 from model import Model
 import numpy as np
 
-root = 'data/acdc_data/test/'
-filename = ''  # chose the file to test
+root = 'data/acdc_data/preprocessed/test/'
+filename = 'sup_test.npy'  # chose the file to test
 
 # ----------------
 
@@ -30,4 +30,21 @@ if __name__ == '__main__':
 
     input_data = np.load(root + filename).astype(np.float32)
 
-    soft_anatomy, hard_anatomy, predicted_mask = model.test(input_data)
+    soft_anatomy, hard_anatomy, predicted_mask, reconstruction = model.test(input_data[:7])
+
+    print(soft_anatomy.shape)
+    print(hard_anatomy.shape)
+    print(predicted_mask.shape)
+    print(reconstruction.shape)
+
+    np.save("tmp/soft_anatomy.npy", soft_anatomy)
+    np.save("tmp/hard_anatomy.npy", hard_anatomy)
+    np.save("tmp/predicted_mask.npy", predicted_mask)
+    np.save("tmp/reconstruction.npy", reconstruction)
+
+
+
+
+
+
+

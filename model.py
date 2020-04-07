@@ -181,16 +181,17 @@ class Model(DatasetInterfaceWrapper):
 
         # sup pathway
         self.sup_pred_mask = sdnet_sup.get_pred_mask(one_hot=False, output='linear')
-        self.sup_pred_mask_oh = sdnet_sup.get_pred_mask(one_hot=True)
-        self.disc_pred_mask = sdnet_disc.get_pred_mask(one_hot=False, output='softmax')
-        self.disc_pred_mask_oh = sdnet_disc.get_pred_mask(one_hot=True)
-        self.disc_hard_anatomy = sdnet_disc.get_hard_anatomy()
-        self.sup_soft_anatomy = sdnet_sup.get_soft_anatomy()
+        self.sup_pred_mask_oh = sdnet_sup.get_pred_mask(one_hot=True)  # not in use
         self.sup_hard_anatomy = sdnet_sup.get_hard_anatomy()
+        self.sup_soft_anatomy = sdnet_sup.get_soft_anatomy()
         self.sup_reconstruction = sdnet_sup.get_input_reconstruction()
 
+        self.disc_pred_mask = sdnet_disc.get_pred_mask(one_hot=False, output='softmax')
+        self.disc_pred_mask_oh = sdnet_disc.get_pred_mask(one_hot=True)  # not in use
+        self.disc_hard_anatomy = sdnet_disc.get_hard_anatomy()  # not in use
+
         # unsup pathway
-        self.unsup_reconstruction = sdnet_unsup.get_input_reconstruction()
+        self.unsup_reconstruction = sdnet_unsup.get_input_reconstruction()  # used in loss
         self.unsup_z_mean, self.unsup_z_logvar, self.unsup_sampled_z = sdnet_unsup.get_z_distribution()
         self.unsup_z_regress = sdnet_unsup.get_z_sample_estimate()
 
@@ -616,7 +617,7 @@ class Model(DatasetInterfaceWrapper):
             if ckpt and ckpt.model_checkpoint_path:
                 saver.restore(sess, ckpt.model_checkpoint_path)
 
-            trained_epochs = self.g_epoch.eval()
+            trained_epochs = self.g_epoch.eval()  # global step is also saved in checkpoint
             print("Model already trained for \033[94m{0}\033[0m epochs.".format(trained_epochs))
             t_step = self.g_train_step.eval()  # global step for train
             v_step = self.g_valid_step.eval()  # global step for validation
