@@ -143,10 +143,10 @@ class Model(DatasetInterfaceWrapper):
         # Repeat indefinitely all the iterators, exception made for the one iterating over the biggest dataset. This
         # ensures that every data is used during training.
 
-        self.sup_train_init, self.sup_valid_init, self.sup_test_init, self.sup_input_data, self.sup_output_data = \
+        self.sup_train_init, self.sup_valid_init, self.sup_test_init, self.sup_input_data, self.sup_output_data, self.sup_output_data_oh = \
             super(Model, self).get_acdc_sup_data(data_path=self.acdc_data_path, repeat=False, seed=self.global_seed)
 
-        self.disc_train_init, self.disc_valid_init, self.disc_input_data, self.disc_output_data = \
+        self.disc_train_init, self.disc_valid_init, self.disc_input_data, self.disc_output_data, self.disc_output_data_oh = \
             super(Model, self).get_acdc_disc_data(data_path=self.acdc_data_path, repeat=True, seed=self.global_seed)
 
         self.unsup_train_init, self.unsup_valid_init, self.unsup_input_data, self.unsup_output_data = \
@@ -167,13 +167,17 @@ class Model(DatasetInterfaceWrapper):
 
         # - - - - - - -
         # define the model for supervised, unsupervised and temporal frame prediction data:
-        sdnet_sup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training, name='Model')
+        sdnet_sup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
+                          use_segmentor=True, name='Model')
+        # sdnet_sup = sdnet_sup.build(self.sup_input_data, self.sup_output_data)
         sdnet_sup = sdnet_sup.build(self.sup_input_data)
 
-        sdnet_disc = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training, name='Model')
+        sdnet_disc = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
+                           use_segmentor=True, name='Model')
         sdnet_disc = sdnet_disc.build(self.disc_input_data, reuse=True)
 
-        sdnet_unsup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training, name='Model')
+        sdnet_unsup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
+                            name='Model')
         sdnet_unsup = sdnet_unsup.build(self.unsup_input_data, reuse=True)
 
         # - - - - - - -
@@ -181,7 +185,7 @@ class Model(DatasetInterfaceWrapper):
 
         # sup pathway
         self.sup_pred_mask = sdnet_sup.get_pred_mask(one_hot=False, output='linear')
-        self.sup_pred_mask_oh = sdnet_sup.get_pred_mask(one_hot=True)  # not in use
+        self.sup_pred_mask_oh = sdnet_sup.get_pred_mask(one_hot=True)
         self.sup_hard_anatomy = sdnet_sup.get_hard_anatomy()
         self.sup_soft_anatomy = sdnet_sup.get_soft_anatomy()
         self.sup_reconstruction = sdnet_sup.get_input_reconstruction()
@@ -199,7 +203,7 @@ class Model(DatasetInterfaceWrapper):
         # build Mask Discriminator (Least Square GAN)
         with tf.variable_scope('MaskDiscriminator'):
             model_real = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
-            model_real = model_real.build(self.disc_output_data[..., 1:], reuse=False)
+            model_real = model_real.build(self.disc_output_data_oh[..., 1:], reuse=False)
 
             pred_heart_mask = self.disc_pred_mask[..., 1:]
             model_fake = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
@@ -229,13 +233,13 @@ class Model(DatasetInterfaceWrapper):
             # # dice = dice_coe(output=soft_pred_mask, target=self.sup_output_data)
             # self.dice_loss = 1.0 - dice_3chs
 
-            self.dice_loss = generalized_dice_loss(output=soft_pred_mask, target=self.sup_output_data)
+            self.dice_loss = generalized_dice_loss(output=soft_pred_mask, target=self.sup_output_data_oh)
 
         # _______
         # Weighted Cross Entropy loss:
         with tf.variable_scope('WXEntropy_loss'):
             self.wxentropy_loss = weighted_softmax_cross_entropy(y_pred=self.sup_pred_mask,
-                                                                 y_true=self.sup_output_data, num_classes=4)
+                                                                 y_true=self.sup_output_data_oh, num_classes=4)
 
         # _______
         # KL Divergence loss:
@@ -262,6 +266,7 @@ class Model(DatasetInterfaceWrapper):
         # define weights for the cost contributes:
         w_kl = 0.1
         w_segm = 10.0
+        # w_segm = 0
         w_rec = 1.0
         w_z_rec = 1.0
         w_adv = 10.0
@@ -323,10 +328,10 @@ class Model(DatasetInterfaceWrapper):
         """
         # Dice
         with tf.variable_scope('Dice'):
-            self.dice = dice_coe(output=self.sup_pred_mask_oh, target=self.sup_output_data)
+            self.dice = dice_coe(output=self.sup_pred_mask_oh, target=self.sup_output_data_oh)
 
         with tf.variable_scope('Dice_3channels'):
-            self.dice_3chs = dice_coe(output=self.sup_pred_mask_oh[..., 1:], target=self.sup_output_data[..., 1:])
+            self.dice_3chs = dice_coe(output=self.sup_pred_mask_oh[..., 1:], target=self.sup_output_data_oh[..., 1:])
 
     def define_summaries(self):
         """
@@ -355,7 +360,7 @@ class Model(DatasetInterfaceWrapper):
         with tf.name_scope('2_Segmentation'):
             img_pred_mask = tf.summary.image('pred_mask', self.sup_pred_mask_oh[..., 1:], max_outputs=3)
         with tf.name_scope('3_Segmentation'):
-            img_mask = tf.summary.image('gt_mask', self.sup_output_data[..., 1:], max_outputs=3)
+            img_mask = tf.summary.image('gt_mask', self.sup_output_data_oh[..., 1:], max_outputs=3)
 
         def get_slice(incoming, idx):
             return tf.expand_dims(incoming[..., idx], -1)
@@ -454,7 +459,7 @@ class Model(DatasetInterfaceWrapper):
                 n_batches += 1
                 if (n_batches % self.skip_step) == 0:
                     print('\r  ...training over batch {1}: {0} batch_sup_loss = {2:.4f}\tbatch_unsup_loss = {3:.4f} {0}'
-                          .format(' ' * 3, n_batches, total_sup_loss, total_unsup_loss), end='\n')
+                          .format(' ' * 3, n_batches, sup_loss, unsup_loss), end='\n')
 
                 caller.on_batch_end(training_state=True, **self.callbacks_kwargs)
 

@@ -10,19 +10,7 @@ during training). In this way the pre-processing will be entirely off-line. Data
 run time.
 
 """
-#  Copyright 2019 Gabriele Valvano
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+# Which has been revised to produce the no-one-hot label input
 
 import numpy as np
 import nibabel as nib
@@ -88,6 +76,30 @@ def get_independent_slices(incoming):
     return np.array(incoming)
 
 
+def remove_empty_slices_with_oh(image, mask=None, mask_oh=None):
+    """ remove empty slices """
+    image_no_empty = []
+    if mask is not None:
+        mask_no_empty = []
+        mask_oh_no_empty = []
+
+    n_frames = len(image)
+    for k in range(n_frames):
+        img = image[k, ...]
+        if img.max() == img.min():
+            print('Skipping blank images')
+            continue
+        else:
+            image_no_empty.append(img)
+            if mask is not None:
+                mask_no_empty.append(mask[k, ...])
+                mask_oh_no_empty.append(mask_oh[k, ...])
+
+    if mask is not None:
+        return np.array(image_no_empty), np.array(mask_no_empty), np.array(mask_oh_no_empty)
+    else:
+        return np.array(image_no_empty)
+
 def remove_empty_slices(image, mask=None):
     """ remove empty slices """
     image_no_empty = []
@@ -109,7 +121,6 @@ def remove_empty_slices(image, mask=None):
         return np.array(image_no_empty), np.array(mask_no_empty)
     else:
         return np.array(image_no_empty)
-
 
 def resize_2d_slices(batch, new_size, interpolation):
     """
@@ -274,7 +285,7 @@ def slice_pre_processing_pipeline(filename):
     return img_array
 
 
-def mask_pre_processing_pipeline(filename):
+def mask_pre_processing_pipeline(filename, one_hot=True):
     """ Pre-processing pipeline.
      With respect to slice_pre_processing_pipeline():
             point 7 uses nearest neighbour interpolation and point 9 is substituted with a one-hot encoding operation
@@ -317,7 +328,8 @@ def mask_pre_processing_pipeline(filename):
     img_array = crop_or_pad_slice_center(img_array, new_size=final_shape, value=0)
 
     # 9. one-hot encode: 4 classes (background + heart structures)
-    img_array = one_hot_encode(img_array, 4)
+    if one_hot:
+        img_array = one_hot_encode(img_array, 4)
 
     return img_array
 
@@ -386,10 +398,17 @@ def build_sup_sets():
 
         stack = []
         stack_masks = []
+        stack_masks_oh = []
         for subdir in subdir_list:
             folder_name = subdir.rsplit('/')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
+
+                files = os.listdir(prefix)
+                for file in files:
+                    if 'noh' in file:
+                        os.remove(os.path.join(prefix, file))
+
                 pt_number = folder_name.split('patient')[1]
 
                 ed, es, _, _, _, _ = parse_info_cfg(prefix + '/Info.cfg')
@@ -416,34 +435,60 @@ def build_sup_sets():
                 after extend:  (128, 128, 1)
                 """
 
-                mask = mask_pre_processing_pipeline(pt_ed_mask_full_path)
+                mask_oh = mask_pre_processing_pipeline(pt_ed_mask_full_path)
+                mask = mask_pre_processing_pipeline(pt_ed_mask_full_path, one_hot=False)
+                mask = np.expand_dims(mask, -1)
+                # print("mask shape: ", mask.shape)
+                # print("One hot mask shape: ", mask_oh.shape)
+                stack_masks_oh.extend(mask_oh)
                 stack_masks.extend(mask)
+                # print("Length of stack: ", len(stack_masks))
+                # print("Length of one hot stack", len(stack_masks_oh))
+                # print("After extending mask: ", stack_masks[1].shape)
+                # print("After extending one hot mask: ", stack_masks_oh[2].shape)
+                # sys.exit()
+
+                """
+                No one hot mask shape:  (11, 128, 128, 1)
+                Length of stack:  11
+                After extending:  (128, 128, 1)
+                """
 
                 np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(ed).zfill(2))), img_array)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc_oh.npy'.format(str(ed).zfill(2))), mask_oh)
                 np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(ed).zfill(2))), mask)
 
                 # Pre-process image and add to the stack
                 img_array = slice_pre_processing_pipeline(pt_es_full_path)
                 img_array = np.expand_dims(img_array, -1)
                 stack.extend(img_array)
-                mask = mask_pre_processing_pipeline(pt_es_mask_full_path)
+                mask_oh = mask_pre_processing_pipeline(pt_es_mask_full_path)
+                stack_masks_oh.extend(mask_oh)
+                mask = mask_pre_processing_pipeline(pt_es_mask_full_path, one_hot=False)
+                mask = np.expand_dims(mask, -1)
                 stack_masks.extend(mask)
 
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(es).zfill(2))), img_array)
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(es).zfill(2))), mask)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(es).zfill(2))),
+                        img_array)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc_oh.npy'.format(str(es).zfill(2))),
+                        mask_oh)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(es).zfill(2))),
+                    mask)
 
         # define array
         stack_array = np.array(stack)
         stack_mask_array = np.array(stack_masks)
+        stack_mask_oh_array = np.array(stack_masks_oh)
 
         # remove empty slices:
-        stack_array, stack_mask_array = remove_empty_slices(stack_array, stack_mask_array)
+        stack_array, stack_mask_array, stack_mask_oh_array = remove_empty_slices_with_oh(stack_array, stack_mask_array, stack_mask_oh_array)
 
         # shuffle training set and save
-        stack_array, stack_mask_array = shuffle(stack_array, stack_mask_array)
+        stack_array, stack_mask_array, stack_mask_oh_array = shuffle(stack_array, stack_mask_array, stack_mask_oh_array)
 
         np.save(os.path.join(dest_dir, '{0}/sup_{0}.npy'.format(set)), stack_array)
         np.save(os.path.join(dest_dir, '{0}/sup_mask_{0}.npy'.format(set)), stack_mask_array)
+        np.save(os.path.join(dest_dir, '{0}/sup_mask_{0}_oh.npy'.format(set)), stack_mask_oh_array)
 
 
 def build_disc_sets():
@@ -460,10 +505,17 @@ def build_disc_sets():
 
         stack = []
         stack_masks = []
+        stack_masks_oh = []
         for subdir in subdir_list:
             folder_name = subdir.rsplit('/')[-1]
             if folder_name.startswith('patient'):
                 prefix = os.path.join(root_dir, folder_name)
+
+                files = os.listdir(prefix)
+                for file in files:
+                    if 'noh' in file:
+                        os.remove(os.path.join(prefix, file))
+
                 pt_number = folder_name.split('patient')[1]
 
                 ed, es, _, _, _, _ = parse_info_cfg(prefix + '/Info.cfg')
@@ -476,43 +528,72 @@ def build_disc_sets():
                 img_array = slice_pre_processing_pipeline(pt_ed_full_path)
                 img_array = np.expand_dims(img_array, -1)
                 stack.extend(img_array)
-                mask = mask_pre_processing_pipeline(pt_ed_mask_full_path)
-                stack_masks.extend(mask)
 
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(ed).zfill(2))), img_array)
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(ed).zfill(2))), mask)
+                mask_oh = mask_pre_processing_pipeline(pt_ed_mask_full_path)
+                mask = mask_pre_processing_pipeline(pt_ed_mask_full_path, one_hot=False)
+                mask = np.expand_dims(mask, -1)
+                # mask = np.expand_dims(mask, -1)
+                # print("No one hot mask shape: ", mask.shape)
+                stack_masks_oh.extend(mask_oh)
+                stack_masks.extend(mask)
+                # print("Length of stack: ", len(stack))
+                # print("After extending: ", stack[1].shape)
+                # sys.exit()
+
+                """
+                No one hot mask shape:  (11, 128, 128, 1)
+                Length of stack:  11
+                After extending:  (128, 128, 1)
+                """
+
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(ed).zfill(2))),
+                        img_array)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc_oh.npy'.format(str(ed).zfill(2))),
+                        mask_oh)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(ed).zfill(2))),
+                    mask)
 
                 # Pre-process image and add to the stack
                 img_array = slice_pre_processing_pipeline(pt_es_full_path)
                 img_array = np.expand_dims(img_array, -1)
                 stack.extend(img_array)
-                mask = mask_pre_processing_pipeline(pt_es_mask_full_path)
+                mask_oh = mask_pre_processing_pipeline(pt_es_mask_full_path)
+                stack_masks_oh.extend(mask_oh)
+                mask = mask_pre_processing_pipeline(pt_es_mask_full_path, one_hot=False)
+                mask = np.expand_dims(mask, -1)
                 stack_masks.extend(mask)
 
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(es).zfill(2))), img_array)
-                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(es).zfill(2))), mask)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_preproc.npy'.format(str(es).zfill(2))),
+                        img_array)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc_oh.npy'.format(str(es).zfill(2))),
+                        mask_oh)
+                np.save(os.path.join(prefix, 'patient' + pt_number + '_frame{0}_gt_preproc.npy'.format(str(es).zfill(2))),
+                    mask)
 
         # define array
         stack_array = np.array(stack)
         stack_mask_array = np.array(stack_masks)
+        stack_mask_oh_array = np.array(stack_masks_oh)
 
         # remove empty slices:
-        stack_array, stack_mask_array = remove_empty_slices(stack_array, stack_mask_array)
+        stack_array, stack_mask_array, stack_mask_oh_array = remove_empty_slices_with_oh(stack_array, stack_mask_array,
+                                                                                         stack_mask_oh_array)
 
         # shuffle training set and save
-        stack_array, stack_mask_array = shuffle(stack_array, stack_mask_array)
+        stack_array, stack_mask_array, stack_mask_oh_array = shuffle(stack_array, stack_mask_array, stack_mask_oh_array)
 
         np.save(os.path.join(dest_dir, '{0}/disc_{0}.npy'.format(set)), stack_array)
         np.save(os.path.join(dest_dir, '{0}/disc_mask_{0}.npy'.format(set)), stack_mask_array)
+        np.save(os.path.join(dest_dir, '{0}/disc_mask_{0}_oh.npy'.format(set)), stack_mask_oh_array)
 
 
 def main():
     print('\nBuilding SUPERVISED sets.')
-    # build_sup_sets()
+    build_sup_sets()
     print('\nBuilding UNSUPERVISED sets.')
-    build_unsup_sets()
+    # build_unsup_sets()
     print('\nBuilding DISCRIMINATOR sets.')
-    # build_disc_sets()
+    build_disc_sets()
 
     print_yellow_text('\nDone.\n', sep=False)
 

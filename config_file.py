@@ -14,7 +14,9 @@
 
 import tensorflow as tf
 
-RUN_ID = 'SDNet'
+RUN_ID = 'seg-supervised-0409z'
+AE_RUN_ID = 'auto-encoder-sure'
+
 CUDA_VISIBLE_DEVICE = 0
 
 data_path = './data/acdc_data'
@@ -23,6 +25,7 @@ data_path = './data/acdc_data'
 def define_flags():
     FLAGS = tf.flags.FLAGS
     tf.flags.DEFINE_string('RUN_ID', RUN_ID, "")
+    tf.flags.DEFINE_string('AE_RUN_ID', AE_RUN_ID, "")
 
     # ____________________________________________________ #
     # ========== ARCHITECTURE HYPER-PARAMETERS ========== #
@@ -50,7 +53,7 @@ def define_flags():
 
     # internal variables:
     tf.flags.DEFINE_integer('num_threads', 20, "number of threads for loading data")
-    tf.flags.DEFINE_integer('skip_step', 4000, "frequency of printing batch report")
+    tf.flags.DEFINE_integer('skip_step', 20, "frequency of printing batch report")
     tf.flags.DEFINE_integer('train_summaries_skip', 10, "number of skips before writing summaries for training steps "
                                                         "(used to reduce its verbosity; put 1 to avoid this)")
     tf.flags.DEFINE_bool('tensorboard_verbose', True, "if True: save also layers weights every N epochs")

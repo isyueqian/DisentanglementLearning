@@ -18,6 +18,7 @@ Wrapper to the dataset interfaces
 from data_interface.interfaces.acdc_sup_interface import DatasetInterface as ACDCSupInterface
 from data_interface.interfaces.acdc_disc_interface import DatasetInterface as ACDCDiscInterface
 from data_interface.interfaces.acdc_unsup_interface import DatasetInterface as ACDCUnsupInterface
+from data_interface.interfaces.acdc_texture_interface import DatasetInterface as ACDCTextureInterface
 
 
 class DatasetInterfaceWrapper(object):
@@ -51,7 +52,7 @@ class DatasetInterfaceWrapper(object):
         # initialize data set interfaces
         acdc_itf = ACDCSupInterface(data_path, self.input_size)
 
-        train_init, valid_init, test_init, input_data, output_data = acdc_itf.get_data(
+        train_init, valid_init, test_init, input_data, output_data, output_data_oh = acdc_itf.get_data(
             b_size=self.batch_size,
             augment=self.augment,
             standardize=self.standardize,
@@ -59,7 +60,30 @@ class DatasetInterfaceWrapper(object):
             num_threads=self.num_threads,
             seed=seed
         )
-        return train_init, valid_init, test_init, input_data, output_data
+        return train_init, valid_init, test_init, input_data, output_data, output_data_oh
+
+    def get_acdc_texture_shape_data(self, data_path, repeat=False, seed=None):
+        """
+        wrapper to ACDC data set. Gets input labels and textures.
+        :param data_path: (str) path to data directory
+        :param repeat: (bool) whether to repeat the input indefinitely
+        :param seed: (int or placeholder) seed for the random operations
+        :return: iterator initializer for train valid, and test data; input and output frame; time and delta time.
+        """
+        print('Define input pipeline for pre-training data...')
+
+        # initialize data set interfaces
+        acdc_itf = ACDCTextureInterface(data_path, label_input_size=self.input_size, texture_input_size=(32, 32))
+
+        train_init, valid_init, test_init, texture_data, label_data = acdc_itf.get_data(
+            b_size=self.batch_size,
+            augment=self.augment,
+            standardize=self.standardize,
+            repeat=repeat,
+            num_threads=self.num_threads,
+            seed=seed
+        )
+        return train_init, valid_init, test_init, texture_data, label_data
 
     def get_acdc_disc_data(self, data_path, repeat=False, seed=None):
         """
@@ -74,7 +98,7 @@ class DatasetInterfaceWrapper(object):
         # initialize data set interfaces
         acdc_itf = ACDCDiscInterface(data_path, self.input_size)
 
-        train_init, valid_init, input_data, output_data = acdc_itf.get_data(
+        train_init, valid_init, input_data, output_data, output_data_oh = acdc_itf.get_data(
             b_size=self.batch_size,
             augment=self.augment,
             standardize=self.standardize,
@@ -83,7 +107,7 @@ class DatasetInterfaceWrapper(object):
             seed=seed
         )
 
-        return train_init, valid_init, input_data, output_data
+        return train_init, valid_init, input_data, output_data, output_data_oh
 
     def get_acdc_unsup_data(self, data_path, repeat=False, seed=None):
         """

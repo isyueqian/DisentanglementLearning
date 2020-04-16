@@ -47,9 +47,9 @@ class DatasetInterface(object):
             subdir_list = [d[:-1] for d in glob(data_dir + suffix)]
 
             for subdir in subdir_list:
-                # folder_name = subdir.rsplit('/')[-1]
+                folder_name = subdir.rsplit('/')[-1]
                 # # in Linux
-                folder_name = subdir.rsplit('\\')[-1]
+                # folder_name = subdir.rsplit('\\')[-1]
                 if folder_name.startswith('patient'):
                     prefix = os.path.join(data_dir, folder_name)
                     pt_number = folder_name.split('patient')[1]

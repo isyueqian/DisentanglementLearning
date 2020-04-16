@@ -90,15 +90,17 @@ class SDNet(object):
         self.z_regress = None
         self.pred_mask = None
         self.input_segmentor = None
+        self.soft_label_anatomy = None
+        self.hard_label_anatomy = None
 
-    def build(self, input_image, reuse=tf.AUTO_REUSE):
+    def build(self, input_image, input_label=None, reuse=tf.AUTO_REUSE):
         """
         Build the model.
         """
         with tf.variable_scope(self.name, reuse=reuse):
             # - - - - - - -
             # build Anatomy Encoder
-            self.soft_anatomy, self.hard_anatomy, _ = self.build_anatomy_encoder(input_image)
+            self.soft_anatomy, self.hard_anatomy, _ = self.build_anatomy_encoder(input_image, input_label)
 
             # - - - - - - -
             # build Modality Encoder
@@ -127,7 +129,7 @@ class SDNet(object):
 
         return self
 
-    def build_anatomy_encoder(self, input_image):
+    def build_anatomy_encoder(self, input_image, input_label=None):
         with tf.variable_scope('AnatomyEncoder'):
             unet = UNet(input_image, n_out=self.n_anatomical_masks, is_training=self.is_training, n_filters=64)
             unet_encoder = unet.build_encoder()
@@ -139,10 +141,29 @@ class SDNet(object):
             # be encoded twice from the model (one anatomy per channel).
             soft_anatomy = tf.nn.softmax(coarse_output)
 
+            if input_label is not None:
+                self.soft_label_anatomy, self.hard_label_anatomy, _ = self.build_label_encoder(input_label)
+                soft_anatomy *= self.soft_label_anatomy
+
         with tf.variable_scope('RoundingLayer'):
             hard_anatomy = rounding_layer(soft_anatomy)
 
         return soft_anatomy, hard_anatomy, unet
+
+    def build_label_encoder(self, input_label):
+        with tf.variable_scope('LabelEncoder'):
+            unet = UNet(input_label, n_out=self.n_anatomical_masks, is_training=self.is_training, n_filters=16)
+            unet_encoder = unet.build_encoder()
+            unet_bottleneck = unet.build_bottleneck(unet_encoder)
+            unet_decoder = unet.build_decoder(unet_bottleneck)
+            coarse_output = unet.build_output(unet_decoder)
+
+            soft_label_anatomy = tf.nn.softmax(coarse_output)
+
+        with tf.variable_scope('RoundingLabelLayer'):
+            hard_label_anatomy = rounding_layer(soft_label_anatomy)
+
+        return soft_label_anatomy, hard_label_anatomy, unet
 
     def build_modality_encoder(self, input_image, hard_anatomy):
         with tf.variable_scope('ModalityEncoder'):
@@ -176,6 +197,12 @@ class SDNet(object):
 
     def get_hard_anatomy(self):
         return self.hard_anatomy
+
+    def get_soft_label_anatomy(self):
+        return self.soft_label_anatomy
+
+    def get_hard_label_anatomy(self):
+        return self.hard_label_anatomy
 
     def get_z_distribution(self):
         return self.z_mean, self.z_logvar, self.sampled_z
