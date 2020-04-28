@@ -100,6 +100,7 @@ def remove_empty_slices_with_oh(image, mask=None, mask_oh=None):
     else:
         return np.array(image_no_empty)
 
+
 def remove_empty_slices(image, mask=None):
     """ remove empty slices """
     image_no_empty = []
@@ -121,6 +122,7 @@ def remove_empty_slices(image, mask=None):
         return np.array(image_no_empty), np.array(mask_no_empty)
     else:
         return np.array(image_no_empty)
+
 
 def resize_2d_slices(batch, new_size, interpolation):
     """
@@ -589,11 +591,11 @@ def build_disc_sets():
 
 def main():
     print('\nBuilding SUPERVISED sets.')
-    build_sup_sets()
+    # build_sup_sets()
     print('\nBuilding UNSUPERVISED sets.')
-    # build_unsup_sets()
+    build_unsup_sets()
     print('\nBuilding DISCRIMINATOR sets.')
-    build_disc_sets()
+    build_disc_sets()  # texture is created from the discriminator dataset, keep the same slice order
 
     print_yellow_text('\nDone.\n', sep=False)
 

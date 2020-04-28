@@ -25,8 +25,8 @@ def create_texture():
     for folder in folders:
         file_path = os.path.join(root_path, folder)
 
-        image_name = 'sup_' + folder + '.npy'
-        label_name = 'sup_mask_' + folder + '.npy'
+        image_name = 'disc_' + folder + '.npy'
+        label_name = 'disc_mask_' + folder + '.npy'
 
         image = np.load(os.path.join(file_path, image_name))
         label = np.load(os.path.join(file_path, label_name))

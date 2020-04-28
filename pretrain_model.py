@@ -126,11 +126,11 @@ class AEModel(DatasetInterfaceWrapper):
         :return:
         """
 
-        texture_ae = AE(self.texture_data, n_out=1, is_training=self.is_training, n_filters=128, name='texture_ae')
-        self.texture_output = texture_ae.build()
+        texture_ae = AE(n_out=1, is_training=self.is_training, n_filters=128, name='texture_ae', trainable=True)
+        self.texture_output = texture_ae.build(self.texture_data)
 
-        label_ae = AE(self.label_data, n_out=1, is_training=self.is_training, n_filters=16, name='label_ae')
-        self.label_output = label_ae.build(reuse=False)
+        label_ae = AE(n_out=1, is_training=self.is_training, n_filters=64, name='label_ae', trainable=True)
+        self.label_output = label_ae.build(self.label_data, reuse=False)
 
     def define_losses(self):
         """

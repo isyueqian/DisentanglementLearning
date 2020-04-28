@@ -26,17 +26,9 @@ b_init = tf.zeros_initializer()
 
 class SDNet(object):
 
-    def __init__(self, n_anatomical_masks, nz_latent, n_classes, is_training, use_segmentor=True, anatomy=None,
+    def __init__(self, n_anatomical_masks, nz_latent, n_classes, is_training, use_segmentor=False, anatomy=None,
                  name='Model'):
         """
-        Implementation of SDNet architecture. For details, refer to:
-          "Factorised Representation Learning in Cardiac Image Analysis" (2019), arXiv preprint arXiv:1903.09467
-          Chartsias, A., Joyce, T., Papanastasiou, G., Williams, M., Newby, D., Dharmakumar, R., & Tsaftaris, S. A.
-
-        Notice that this implementation does not contain the mask discriminator. The mask discriminator architecture is
-        in mask_discriminator.py and you can easily add it following the example at:
-            https://github.com/gvalvano/sdnet/blob/b56339534ccbe95261eb2b1642e80aa52d644201/model.py#L199
-
         :param n_anatomical_masks: (int) number of anatomical masks (s factors)
         :param nz_latent: (int) number of latent dimensions as output of the modality encoder
         :param n_classes: (int) number of classes (4: background, LV, RV, MC)
@@ -79,7 +71,7 @@ class SDNet(object):
         self.n_classes = n_classes
         self.anatomy = anatomy
 
-        self.use_segmentor = use_segmentor
+        self.use_segmentor = use_segmentor  # still save this to evaluate model by predicting dice score in the future
 
         self.soft_anatomy = None
         self.hard_anatomy = None
@@ -92,6 +84,9 @@ class SDNet(object):
         self.input_segmentor = None
         self.soft_label_anatomy = None
         self.hard_label_anatomy = None
+        self.anatomy_code = None
+        # self.texture_rec = None
+        # self.label_rec = None
 
     def build(self, input_image, input_label=None, reuse=tf.AUTO_REUSE):
         """
@@ -100,7 +95,8 @@ class SDNet(object):
         with tf.variable_scope(self.name, reuse=reuse):
             # - - - - - - -
             # build Anatomy Encoder
-            self.soft_anatomy, self.hard_anatomy, _ = self.build_anatomy_encoder(input_image, input_label)
+            self.soft_anatomy, self.hard_anatomy, anatomy_encoder = self.build_anatomy_encoder(input_image, input_label)
+            self.anatomy_code = anatomy_encoder.code
 
             # - - - - - - -
             # build Modality Encoder
@@ -197,6 +193,9 @@ class SDNet(object):
 
     def get_hard_anatomy(self):
         return self.hard_anatomy
+
+    def get_anatomy_code(self):
+        return self.anatomy_code
 
     def get_soft_label_anatomy(self):
         return self.soft_label_anatomy

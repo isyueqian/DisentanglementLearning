@@ -98,7 +98,7 @@ class DatasetInterfaceWrapper(object):
         # initialize data set interfaces
         acdc_itf = ACDCDiscInterface(data_path, self.input_size)
 
-        train_init, valid_init, input_data, output_data, output_data_oh = acdc_itf.get_data(
+        train_init, valid_init, test_init, image_data, label_data, label_data_oh, texture_data = acdc_itf.get_data(
             b_size=self.batch_size,
             augment=self.augment,
             standardize=self.standardize,
@@ -107,7 +107,7 @@ class DatasetInterfaceWrapper(object):
             seed=seed
         )
 
-        return train_init, valid_init, input_data, output_data, output_data_oh
+        return train_init, valid_init, test_init, image_data, label_data, label_data_oh, texture_data
 
     def get_acdc_unsup_data(self, data_path, repeat=False, seed=None):
         """

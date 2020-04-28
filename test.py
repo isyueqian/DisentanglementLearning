@@ -17,9 +17,15 @@ For the test the pre-trained model
 
 from model import Model
 import numpy as np
+import os
+import shutil
+
+test_ID = '100D_1rec'
 
 root = 'data/acdc_data/preprocessed/test/'
-filename = 'sup_test.npy'  # chose the file to test
+filename = 'disc_test.npy'  # chose the file to test, can double check with disc ground truth
+texture_filename = 'texture_input_test.npy'
+label_filename = 'disc_mask_test.npy'
 
 # ----------------
 
@@ -29,18 +35,33 @@ if __name__ == '__main__':
     model.build()
 
     input_data = np.load(root + filename).astype(np.float32)
+    input_texture = np.load(root + texture_filename).astype(np.float32)
+    input_label = np.load(root + label_filename).astype(np.float32)
 
-    soft_anatomy, hard_anatomy, predicted_mask, reconstruction = model.test(input_data[:7])
+    soft_anatomy, hard_anatomy, texture_rec, texture_output, label_rec, label_output, image_rec = \
+        model.test(input_data[:7], input_texture[:7], input_label[:7])
 
     print(soft_anatomy.shape)
     print(hard_anatomy.shape)
-    print(predicted_mask.shape)
-    print(reconstruction.shape)
+    print(texture_rec.shape)
+    print(texture_output.shape)
+    print(label_rec.shape)
+    print(label_output.shape)
+    print(image_rec.shape)
 
-    np.save("tmp/soft_anatomy.npy", soft_anatomy)
-    np.save("tmp/hard_anatomy.npy", hard_anatomy)
-    np.save("tmp/predicted_mask.npy", predicted_mask)
-    np.save("tmp/reconstruction.npy", reconstruction)
+    root_path = "tmp/" + test_ID + '/'
+    if os.path.exists(root_path):
+        shutil.rmtree(root_path)
+        os.makedirs(root_path)
+    else:
+        os.makedirs(root_path)
+    np.save(root_path + "soft_anatomy.npy", soft_anatomy)
+    np.save(root_path + "hard_anatomy.npy", hard_anatomy)
+    np.save(root_path + "texture_rec.npy", texture_rec)
+    np.save(root_path + "texture_output.npy", texture_output)
+    np.save(root_path + "label_rec.npy", label_rec)
+    np.save(root_path + "label_output.npy", label_output)
+    np.save(root_path + "image_rec.npy", image_rec)
 
 
 

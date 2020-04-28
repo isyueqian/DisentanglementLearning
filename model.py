@@ -1,17 +1,3 @@
-#  Copyright 2019 Gabriele Valvano
-#
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import time
@@ -24,12 +10,14 @@ from idas.callbacks.early_stopping_callback import EarlyStoppingCallback, EarlyS
 import config_file
 from architectures.mask_discriminator import MaskDiscriminator
 from architectures.sdnet import SDNet
+from architectures.AutoEncoder import AE
 from idas.metrics.tf_metrics import dice_coe
 from idas.losses.tf_losses import weighted_softmax_cross_entropy, generalized_dice_loss
 from tensorflow.core.framework import summary_pb2
 import errno
 from idas.utils import ProgressBar
 import random
+import numpy as np
 
 
 class Model(DatasetInterfaceWrapper):
@@ -45,22 +33,25 @@ class Model(DatasetInterfaceWrapper):
 
         self.run_id = FLAGS.RUN_ID if (run_id is None) else run_id
         self.num_threads = FLAGS.num_threads
+
         os.environ["CUDA_VISIBLE_DEVICES"] = str(FLAGS.CUDA_VISIBLE_DEVICE)
 
         # -----------------------------
         # Model hyper-parameters:
         self.lr = tf.Variable(FLAGS.lr, dtype=tf.float32, trainable=False, name='learning_rate')
         self.batch_size = FLAGS.b_size
-        self.nz_latent = FLAGS.nz_latent
+        self.nz_latent = FLAGS.nz_latent  # for modality encoder
         self.n_anatomical_masks = FLAGS.n_anatomical_masks
-        self.n_frame_composing_masks = FLAGS.n_frame_composing_masks
+        self.label_ae_filters = FLAGS.label_ae_filters
+        self.texture_ae_filters = FLAGS.texture_ae_filters
+        self.disc_times = FLAGS.disc_times
 
         # -----------------------------
         # Data
 
         # data specifics
-        self.input_size = FLAGS.input_size
-        self.n_classes = FLAGS.n_classes
+        self.input_size = FLAGS.input_size  # not including texture
+        self.n_classes = FLAGS.n_classes  # originally used for segmentation
 
         # ACDC data set
         self.acdc_data_path = FLAGS.acdc_data_path  # list of path for the training and validation files:
@@ -74,6 +65,7 @@ class Model(DatasetInterfaceWrapper):
 
         # path to save checkpoints and graph
         self.last_checkpoint_dir = './results/checkpoints/' + FLAGS.RUN_ID
+        self.ae_checkpoint_dir = './ae_results/checkpoints/' + FLAGS.AE_RUN_ID
         self.checkpoint_dir = './results/checkpoints/' + FLAGS.RUN_ID
         self.graph_dir = './results/graphs/' + FLAGS.RUN_ID + '/convnet'
         self.history_log_dir = './results/history_logs/' + FLAGS.RUN_ID
@@ -140,77 +132,92 @@ class Model(DatasetInterfaceWrapper):
 
         self.global_seed = tf.placeholder(tf.int64, shape=())
 
-        # Repeat indefinitely all the iterators, exception made for the one iterating over the biggest dataset. This
-        # ensures that every data is used during training.
+        self.disc_train_init, self.disc_valid_init, self.disc_test_init, \
+        self.disc_image_data, self.disc_label_data, self.disc_label_data_oh, self.disc_texture_data = \
+            super(Model, self).get_acdc_disc_data(data_path=self.acdc_data_path, repeat=False, seed=self.global_seed)
 
-        self.sup_train_init, self.sup_valid_init, self.sup_test_init, self.sup_input_data, self.sup_output_data, self.sup_output_data_oh = \
-            super(Model, self).get_acdc_sup_data(data_path=self.acdc_data_path, repeat=False, seed=self.global_seed)
-
-        self.disc_train_init, self.disc_valid_init, self.disc_input_data, self.disc_output_data, self.disc_output_data_oh = \
-            super(Model, self).get_acdc_disc_data(data_path=self.acdc_data_path, repeat=True, seed=self.global_seed)
-
-        self.unsup_train_init, self.unsup_valid_init, self.unsup_input_data, self.unsup_output_data = \
+        self.unsup_train_init, self.unsup_valid_init, \
+        self.unsup_input_data, self.unsup_output_data = \
             super(Model, self).get_acdc_unsup_data(data_path=self.acdc_data_path, repeat=True, seed=self.global_seed)
 
     def define_model(self):
         """ Define the network architecture.
         Notice that, since we want to share the weights across different tasks we must define one SDNet for every task
         with reuse=True. Then, we have:
-          - sdnet_sup: model for the supervised task. Here we want to predict the correct segmentation mask given the
-                        ground truth labels.
-          - sdnet_disc: model for the adversarial discriminator. Here we want to predict segmentation masks that appear
-                        realistic to an adversarial discriminator that is trained to distinguish real segmentations from
-                        the generated ones.
+
+          - sdnet_disc: model for the adversarial discriminator. 2 discriminator are used separately for texture
+                        reconstruction from texture/image and label reconstruction from label/image.
           - sdnet_unsup: model for the unsupervised task of decomposing the image in anatomical and modality dependent
                         factors (s and z, respectively). The model is trained to reconstruct the input image using them.
         """
 
-        # - - - - - - -
-        # define the model for supervised, unsupervised and temporal frame prediction data:
-        sdnet_sup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
-                          use_segmentor=True, name='Model')
-        # sdnet_sup = sdnet_sup.build(self.sup_input_data, self.sup_output_data)
-        sdnet_sup = sdnet_sup.build(self.sup_input_data)
-
         sdnet_disc = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
-                           use_segmentor=True, name='Model')
-        sdnet_disc = sdnet_disc.build(self.disc_input_data, reuse=True)
+                           name='Model')  # all prediction masks are false
+        sdnet_disc = sdnet_disc.build(self.disc_image_data)
 
         sdnet_unsup = SDNet(self.n_anatomical_masks, self.nz_latent, self.n_classes, self.is_training,
                             name='Model')
         sdnet_unsup = sdnet_unsup.build(self.unsup_input_data, reuse=True)
 
+        # the auto-encoder-sure model
+        texture_ae = AE(n_out=1, is_training=False, n_filters=self.texture_ae_filters, name='texture_ae', trainable=False)
+
+        label_ae = AE(n_out=1, is_training=False, n_filters=self.label_ae_filters, name='label_ae', trainable=False)
+
         # - - - - - - -
         # define tensors for the losses:
 
-        # sup pathway
-        self.sup_pred_mask = sdnet_sup.get_pred_mask(one_hot=False, output='linear')
-        self.sup_pred_mask_oh = sdnet_sup.get_pred_mask(one_hot=True)
-        self.sup_hard_anatomy = sdnet_sup.get_hard_anatomy()
-        self.sup_soft_anatomy = sdnet_sup.get_soft_anatomy()
-        self.sup_reconstruction = sdnet_sup.get_input_reconstruction()
-
-        self.disc_pred_mask = sdnet_disc.get_pred_mask(one_hot=False, output='softmax')
-        self.disc_pred_mask_oh = sdnet_disc.get_pred_mask(one_hot=True)  # not in use
-        self.disc_hard_anatomy = sdnet_disc.get_hard_anatomy()  # not in use
+        # pre-trained
+        self.texture_output = texture_ae.build(self.disc_texture_data)
+        self.label_output = label_ae.build(self.disc_label_data)
 
         # unsup pathway
         self.unsup_reconstruction = sdnet_unsup.get_input_reconstruction()  # used in loss
         self.unsup_z_mean, self.unsup_z_logvar, self.unsup_sampled_z = sdnet_unsup.get_z_distribution()
         self.unsup_z_regress = sdnet_unsup.get_z_sample_estimate()
 
+        # disc pathway
+        self.anatomy_code = sdnet_disc.get_anatomy_code()
+
+        print("label_code.shape: ", self.anatomy_code.shape)  # compare with the training size
+        self.label_rec_decoder = label_ae.build_decoder(self.anatomy_code, reuse=True)
+        self.label_rec = label_ae.build_output(self.label_rec_decoder, reuse=True)
+
+        texture_code_shape = tf.constant(np.array([self.batch_size,
+                                                   np.power(self.nz_latent, 1/3),
+                                                   np.power(self.nz_latent, 1/3),
+                                                   np.power(self.nz_latent, 1/3)], dtype=np.int32))
+        self.texture_code = tf.reshape(self.unsup_sampled_z, texture_code_shape)
+        self.texture_code = tf.tile(self.texture_code, [1, 1, 1, self.texture_ae_filters*8])
+        print("texture_code.shape: ", self.texture_code.shape)
+        self.texture_rec_decoder = texture_ae.build_decoder(self.texture_code, reuse=True)
+
+        self.texture_rec = label_ae.build_output(self.texture_rec_decoder, reuse=True)
+
+        self.disc_hard_anatomy = sdnet_disc.get_hard_anatomy()
+        self.disc_soft_anatomy = sdnet_disc.get_soft_anatomy()
+
         # - - - - - - -
-        # build Mask Discriminator (Least Square GAN)
-        with tf.variable_scope('MaskDiscriminator'):
-            model_real = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
-            model_real = model_real.build(self.disc_output_data_oh[..., 1:], reuse=False)
+        # build Label Discriminator (Least Square GAN)
+        with tf.variable_scope('LabelDiscriminator'):
+            l_model_real = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
+            l_model_real = l_model_real.build(self.label_output, reuse=False)
 
-            pred_heart_mask = self.disc_pred_mask[..., 1:]
-            model_fake = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
-            model_fake = model_fake.build(pred_heart_mask, reuse=True)
+            l_model_fake = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
+            l_model_fake = l_model_fake.build(self.label_rec, reuse=True)
 
-            self.disc_real = model_real.get_prediction()
-            self.disc_fake = model_fake.get_prediction()
+            self.label_disc_real = l_model_real.get_prediction()
+            self.label_disc_fake = l_model_fake.get_prediction()
+
+        with tf.variable_scope('TextureDiscriminator'):
+            t_model_real = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
+            t_model_real = t_model_real.build(self.texture_output, reuse=False)
+
+            t_model_fake = MaskDiscriminator(self.is_training, n_filters=64, out_mode='scalar')
+            t_model_fake = t_model_fake.build(self.texture_rec, reuse=True)
+
+            self.texture_disc_real = t_model_real.get_prediction()
+            self.texture_disc_fake = t_model_fake.get_prediction()
 
     def define_losses(self):
         """
@@ -219,27 +226,10 @@ class Model(DatasetInterfaceWrapper):
         # _______
         # Reconstruction loss:
         with tf.variable_scope('Reconstruction_loss'):
-            self.unsup_rec_loss = tf.reduce_mean(tf.abs(self.unsup_reconstruction - self.unsup_output_data))
+            self.unsup_image_rec_loss = tf.reduce_mean(tf.abs(self.unsup_reconstruction - self.unsup_output_data))
             self.unsup_z_regress_loss = tf.reduce_mean(tf.abs(self.unsup_z_regress - self.unsup_sampled_z))
-
-            self.sup_rec_loss = tf.reduce_mean(tf.abs(self.sup_reconstruction - self.sup_input_data))
-
-        # _______
-        # Dice loss:
-        with tf.variable_scope('3Chs_Dice_loss'):
-            soft_pred_mask = tf.nn.softmax(self.sup_pred_mask)
-
-            # dice_3chs = dice_coe(output=soft_pred_mask[..., 1:], target=self.sup_output_data[..., 1:])
-            # # dice = dice_coe(output=soft_pred_mask, target=self.sup_output_data)
-            # self.dice_loss = 1.0 - dice_3chs
-
-            self.dice_loss = generalized_dice_loss(output=soft_pred_mask, target=self.sup_output_data_oh)
-
-        # _______
-        # Weighted Cross Entropy loss:
-        with tf.variable_scope('WXEntropy_loss'):
-            self.wxentropy_loss = weighted_softmax_cross_entropy(y_pred=self.sup_pred_mask,
-                                                                 y_true=self.sup_output_data_oh, num_classes=4)
+            self.texture_rec_loss = tf.reduce_mean(tf.abs(self.texture_rec - self.texture_output))
+            self.label_rec_loss = tf.reduce_mean(tf.abs(self.label_rec - self.label_output))
 
         # _______
         # KL Divergence loss:
@@ -251,10 +241,26 @@ class Model(DatasetInterfaceWrapper):
         # _______
         # Mask Discriminator loss:
         # this is a LeastSquare GAN: use MSE as loss
-        with tf.variable_scope('MaskDiscriminator_loss'):
-            self.adv_disc_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.disc_real, 1.0)) + \
-                                 0.5 * tf.reduce_mean(tf.squared_difference(self.disc_fake, 0.0))
-            self.adv_gen_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.disc_fake, 1.0))
+        with tf.variable_scope('LabelDiscriminator_loss'):
+            self.label_adv_disc_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.label_disc_real, 1.0)) + \
+                                       0.5 * tf.reduce_mean(tf.squared_difference(self.label_disc_fake, 0.0))
+            self.label_adv_gen_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.label_disc_fake, 1.0))
+
+        with tf.variable_scope('TextureDiscriminator_loss'):
+            self.texture_adv_disc_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.texture_disc_real, 1.0)) + \
+                                         0.5 * tf.reduce_mean(tf.squared_difference(self.texture_disc_fake, 0.0))
+            self.texture_adv_gen_loss = 0.5 * tf.reduce_mean(tf.squared_difference(self.texture_disc_fake, 1.0))
+
+        # _______
+        # Mask Discriminator loss:
+        # this is a vanilla GAN: use CrossEntropy as loss
+        # with tf.variable_scope('LabelDiscriminator_loss'):
+        #     self.label_adv_disc_loss = - tf.reduce_mean(tf.log(self.label_disc_real) + tf.log(1. - self.label_disc_fake))
+        #     self.label_adv_gen_loss = - tf.reduce_mean(tf.log(self.label_disc_fake))
+        #
+        # with tf.variable_scope('TextureDiscriminator_loss'):
+        #     self.texture_adv_disc_loss = - tf.reduce_mean(tf.log(self.texture_disc_real) + tf.log(1. - self.texture_disc_fake))
+        #     self.texture_adv_gen_loss = - tf.reduce_mean(tf.log(self.texture_disc_fake))
 
         # _______
         # L2 regularization loss:
@@ -265,25 +271,25 @@ class Model(DatasetInterfaceWrapper):
 
         # define weights for the cost contributes:
         w_kl = 0.1
-        w_segm = 10.0
-        # w_segm = 0
-        w_rec = 1.0
+        w_image_rec = 1.0
         w_z_rec = 1.0
+        w_label_rec = 1.0
+        w_texture_rec = 1.0
         w_adv = 10.0
-        w_xentr = 0.10
 
-        # define losses for supervised, unsupervised and frame prediction steps:
-        self.sup_loss = w_segm * (w_xentr * self.wxentropy_loss + self.dice_loss)
-
+        # define losses for unsupervised and discriminator prediction steps:
         self.unsup_loss = w_kl * self.kl_div_loss + \
-                          w_rec * self.unsup_rec_loss + \
+                          w_image_rec * self.unsup_image_rec_loss + \
                           w_z_rec * self.unsup_z_regress_loss + \
-                          w_adv * self.adv_gen_loss
+                          w_adv * self.label_adv_gen_loss + \
+                          w_adv * self.texture_adv_gen_loss  \
+                          # w_label_rec * self.label_rec_loss + \
+                          # w_texture_rec * self.texture_rec_loss
 
-        self.discriminator_loss = w_adv * self.adv_disc_loss
+        self.discriminator_loss = w_adv * self.label_adv_disc_loss + \
+                                  w_adv * self.texture_adv_disc_loss
 
         # add regularization:
-        # self.sup_loss += 0.01 * self.l2_reg_loss
         # self.unsup_loss += 0.01 * self.l2_reg_loss
 
     def define_optimizers(self):
@@ -308,102 +314,74 @@ class Model(DatasetInterfaceWrapper):
 
             return train_op
 
-        clip = False
+        clip = False  # todo: try true
         optimizer = tf.train.AdamOptimizer(self.lr)
-
-        sup_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "Model/AnatomyEncoder")
-        sup_vars.extend(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "Model/Segmentor"))
-        self.train_op_sup = _train_op_wrapper(self.sup_loss, optimizer, clip, var_list=sup_vars)
 
         self.train_op_unsup = _train_op_wrapper(self.unsup_loss, optimizer, clip)
 
-        disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "MaskDiscriminator")
+        disc_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "LabelDiscriminator")
+        disc_vars.extend(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "TextureDiscriminator"))
         self.train_op_adv_disc = _train_op_wrapper(self.discriminator_loss, optimizer, clip, var_list=disc_vars)
 
-        self.global_train_op = tf.group(self.train_op_sup, self.train_op_unsup, self.train_op_adv_disc)
+        disc_op_list = []
+        for i in range(self.disc_times):
+            disc_op_list.append(self.train_op_adv_disc)
+
+        with tf.control_dependencies([self.train_op_unsup]):
+            self.global_train_op = tf.group(disc_op_list)
 
     def define_eval_metrics(self):
         """
         Evaluate the model on the current batch
         """
-        # Dice
-        with tf.variable_scope('Dice'):
-            self.dice = dice_coe(output=self.sup_pred_mask_oh, target=self.sup_output_data_oh)
-
-        with tf.variable_scope('Dice_3channels'):
-            self.dice_3chs = dice_coe(output=self.sup_pred_mask_oh[..., 1:], target=self.sup_output_data_oh[..., 1:])
+        # todo: insert a metric later
+        return
 
     def define_summaries(self):
         """
         Create summaries to write on TensorBoard
         """
         # Scalar summaries:
+        with tf.name_scope('Total_loss'):
+            tr_disc = tf.summary.scalar('train/disc_loss', self.discriminator_loss)
+            tr_unsup = tf.summary.scalar('train/unsup_loss', self.unsup_loss)
+
         with tf.name_scope('Reconstruction'):
-            tr_rec = tf.summary.scalar('train/rec_loss', self.unsup_rec_loss)
-            val_rec = tf.summary.scalar('validation/rec_loss', self.unsup_rec_loss)
-            val_zrec = tf.summary.scalar('validation/z_rec_loss', self.unsup_z_regress_loss)
+            tr_image_rec = tf.summary.scalar('train/image_rec_loss', self.unsup_image_rec_loss)
+            tr_label_rec = tf.summary.scalar('train/label_rec_loss', self.label_rec_loss)
+            tr_tex_rec = tf.summary.scalar('train/texture_rec_loss', self.texture_rec_loss)
 
         with tf.name_scope('KL_Divergence'):
-            tr_kl = tf.summary.scalar('train/loss', self.kl_div_loss)
-
-        with tf.name_scope('Dice_loss'):
-            tr_dice_loss_3chs = tf.summary.scalar('train/dice_3channels', 1.0 - self.dice_3chs)
-            val_dice_loss_3chs = tf.summary.scalar('validation/avg_dice_3channels', 1.0 - self.dice_3chs)
+            tr_kl = tf.summary.scalar('train/kl_loss', self.kl_div_loss)
 
         # Image summaries:
         with tf.name_scope('0_Input'):
-            img_inp_s = tf.summary.image('input_sup', self.sup_input_data[..., :], max_outputs=3)
-            img_inp_us = tf.summary.image('input_unsup', self.unsup_input_data[..., :], max_outputs=3)
+            img_inp_us = tf.summary.image('input_unsup', self.unsup_input_data, max_outputs=2)
         with tf.name_scope('1_Reconstruction'):
-            img_rec_s = tf.summary.image('sup_rec', self.sup_reconstruction, max_outputs=3)
-            img_rec_us = tf.summary.image('unsup_rec', self.unsup_reconstruction, max_outputs=3)
-        with tf.name_scope('2_Segmentation'):
-            img_pred_mask = tf.summary.image('pred_mask', self.sup_pred_mask_oh[..., 1:], max_outputs=3)
-        with tf.name_scope('3_Segmentation'):
-            img_mask = tf.summary.image('gt_mask', self.sup_output_data_oh[..., 1:], max_outputs=3)
+            img_rec_us = tf.summary.image('unsup_rec', self.unsup_reconstruction, max_outputs=2)
 
-        def get_slice(incoming, idx):
+        def get_slice(incoming, idx): # for soft and hard anatomy
             return tf.expand_dims(incoming[..., idx], -1)
 
         N = self.n_anatomical_masks
-        with tf.name_scope('4_SoftAnatomy'):
-            img_s_an_lst = [tf.summary.image('soft_{0}'.format(i), get_slice(self.sup_soft_anatomy, i), max_outputs=1)
+        with tf.name_scope('2_SoftAnatomy'):
+            img_s_an_lst = [tf.summary.image('soft_{0}'.format(i), get_slice(self.disc_soft_anatomy, i), max_outputs=1)
                             for i in range(N)]
-        with tf.name_scope('5_HardAnatomy'):
-            img_h_an_lst = [tf.summary.image('hard_{0}'.format(i), get_slice(self.sup_hard_anatomy, i), max_outputs=1)
+        with tf.name_scope('3_HardAnatomy'):
+            img_h_an_lst = [tf.summary.image('hard_{0}'.format(i), get_slice(self.disc_hard_anatomy, i), max_outputs=1)
                             for i in range(N)]
-
-        with tf.name_scope('10_TEST_RESULTS'):
-            img_test_results = [tf.summary.image('0_hard_{0}'.format(i),
-                                                 get_slice(self.sup_hard_anatomy, i), max_outputs=1) for i in range(N)]
-            img_test_results.append(tf.summary.image('0_pred_mask_tframe', self.sup_pred_mask_oh[..., 1:], max_outputs=1))
 
         # _______________________________
         # merging all scalar summaries:
-        sup_train_scalar_summaries = [tr_dice_loss_3chs]
-        sup_valid_scalar_summaries = [val_dice_loss_3chs]
-        unsup_train_scalar_summaries = [tr_rec, tr_kl]
-        unsup_valid_scalar_summaries = [val_rec, val_zrec]
-        all_train_scalar_summaries = [tr_dice_loss_3chs, tr_rec, tr_kl]
+        train_scalar_summaries = [tr_disc, tr_unsup, tr_image_rec, tr_label_rec, tr_tex_rec, tr_kl]
 
-        self.sup_train_scalar_summary_op = tf.summary.merge(sup_train_scalar_summaries)
-        self.sup_valid_scalar_summary_op = tf.summary.merge(sup_valid_scalar_summaries)
-        self.unsup_train_scalar_summary_op = tf.summary.merge(unsup_train_scalar_summaries)
-        self.unsup_valid_scalar_summary_op = tf.summary.merge(unsup_valid_scalar_summaries)
-        self.all_train_scalar_summary_op = tf.summary.merge(all_train_scalar_summaries)
+        self.train_scalar_summary_op = tf.summary.merge(train_scalar_summaries)
 
         # _______________________________
         # merging all images summaries:
-        sup_valid_images_summaries = [img_inp_s, img_rec_s, img_mask, img_pred_mask]
-        unsup_valid_images_summaries = [img_inp_us, img_rec_us]
-        sup_valid_images_summaries.extend(img_s_an_lst)
-        sup_valid_images_summaries.extend(img_h_an_lst)
-        sup_test_images_summaries = []
-        sup_test_images_summaries.extend(img_test_results)
+        valid_images_summaries = [img_inp_us, img_rec_us, img_s_an_lst, img_h_an_lst]
 
-        self.sup_valid_images_summary_op = tf.summary.merge(sup_valid_images_summaries)
-        self.unsup_valid_images_summary_op = tf.summary.merge(unsup_valid_images_summaries)
-        self.sup_test_images_summary_op = tf.summary.merge(sup_test_images_summaries)
+        self.valid_images_summary_op = tf.summary.merge(valid_images_summaries)
 
         # ---- #
         if self.tensorboard_verbose:
@@ -412,17 +390,16 @@ class Model(DatasetInterfaceWrapper):
             self.weights_summary = tf.summary.merge(weights_summary)
 
     def _train_all_op(self, sess, writer, step):
-        _, sl, usl, dl, scalar_summaries = sess.run([self.global_train_op,
-                                                     self.sup_loss,
-                                                     self.unsup_loss,
-                                                     self.adv_disc_loss,
-                                                     self.all_train_scalar_summary_op],
-                                                    feed_dict={self.is_training: True})
+        _, usl, dl, scalar_summaries = sess.run([self.global_train_op,
+                                                 self.unsup_loss,
+                                                 self.discriminator_loss,
+                                                 self.train_scalar_summary_op],
+                                                feed_dict={self.is_training: True})
 
         if random.randint(0, self.train_summaries_skip) == 0:
             writer.add_summary(scalar_summaries, global_step=step)
 
-        return sl, usl + dl
+        return usl, dl
 
     def train_one_epoch(self, sess, iterator_init_list, writer, step, caller, seed):
         """ train the model for one epoch. """
@@ -441,7 +418,7 @@ class Model(DatasetInterfaceWrapper):
         for init in iterator_init_list:
             sess.run(init, feed_dict={self.global_seed: seed})
 
-        total_sup_loss = 0
+        total_disc_loss = 0
         total_unsup_loss = 0
         n_batches = 0
 
@@ -451,21 +428,21 @@ class Model(DatasetInterfaceWrapper):
 
                 caller.on_batch_begin(training_state=True, **self.callbacks_kwargs)
 
-                sup_loss, unsup_loss = self._train_all_op(sess, writer, step)
-                total_sup_loss += sup_loss
+                unsup_loss, disc_loss = self._train_all_op(sess, writer, step)
+                total_disc_loss += disc_loss
                 total_unsup_loss += unsup_loss
                 step += 1
 
                 n_batches += 1
                 if (n_batches % self.skip_step) == 0:
-                    print('\r  ...training over batch {1}: {0} batch_sup_loss = {2:.4f}\tbatch_unsup_loss = {3:.4f} {0}'
-                          .format(' ' * 3, n_batches, sup_loss, unsup_loss), end='\n')
+                    print('\r  ...training over batch {1}: {0} batch_disc_loss = {2:.4f}\tbatch_unsup_loss = {3:.4f} {0}'
+                          .format(' ' * 3, n_batches, disc_loss, unsup_loss), end='\n')
 
                 caller.on_batch_end(training_state=True, **self.callbacks_kwargs)
 
         except tf.errors.OutOfRangeError:
             # End of the epoch. Compute statistics here:
-            total_loss = total_sup_loss + total_unsup_loss
+            total_loss = total_disc_loss + total_unsup_loss
             avg_loss = total_loss / n_batches
             delta_t = time.time() - start_time
 
@@ -482,16 +459,12 @@ class Model(DatasetInterfaceWrapper):
         return step
 
     def _eval_all_op(self, sess, writer, step):
-        sl, d3chl, usl, sup_sc_summ, sup_im_summ, sunup_sc_summ, = \
-            sess.run([self.sup_loss, self.dice_3chs, self.unsup_loss,
-                      self.sup_valid_scalar_summary_op,
-                      self.sup_valid_images_summary_op,
-                      self.unsup_valid_scalar_summary_op],
+        usl, dsl, unsup_im_summ= \
+            sess.run([self.unsup_loss, self.discriminator_loss,
+                      self.valid_images_summary_op],
                      feed_dict={self.is_training: False})
-        writer.add_summary(sup_sc_summ, global_step=step)
-        writer.add_summary(sup_im_summ, global_step=step)
-        writer.add_summary(sunup_sc_summ, global_step=step)
-        return sl, d3chl, usl
+        writer.add_summary(unsup_im_summ, global_step=step)
+        return usl, dsl
 
     def eval_once(self, sess, iterator_init_list, writer, step, caller):
         """ Eval the model once """
@@ -501,17 +474,15 @@ class Model(DatasetInterfaceWrapper):
         for init in iterator_init_list:
             sess.run(init)
 
-        total_sup_loss = 0
-        total_dice_score = 0
+        total_disc_loss = 0
         total_unsup_loss = 0
         n_batches = 0
         try:
             while True:
                 caller.on_batch_begin(training_state=False, **self.callbacks_kwargs)
 
-                sup_loss, dice_score, unsup_loss = self._eval_all_op(sess, writer, step)
-                total_dice_score += dice_score
-                total_sup_loss += sup_loss
+                unsup_loss, disc_loss = self._eval_all_op(sess, writer, step)
+                total_disc_loss += disc_loss
                 total_unsup_loss += unsup_loss
                 step += 1
 
@@ -520,16 +491,9 @@ class Model(DatasetInterfaceWrapper):
 
         except tf.errors.OutOfRangeError:
             # End of the validation set. Compute statistics here:
-            total_loss = total_sup_loss + total_unsup_loss
+            total_loss = total_disc_loss + total_unsup_loss
             avg_loss = total_loss / n_batches
-            avg_dice = total_dice_score / n_batches
-            dice_loss = 1.0 - avg_dice
             delta_t = time.time() - start_time
-
-            value = summary_pb2.Summary.Value(tag="Dice_1/validation/dice_3channels_avg", simple_value=avg_dice)
-            summary = summary_pb2.Summary(value=[value])
-            writer.add_summary(summary, global_step=step)
-
             pass
 
         # update global epoch counter:
@@ -537,35 +501,35 @@ class Model(DatasetInterfaceWrapper):
 
         print('\033[31m  VALIDATION\033[0m:  average loss = {1:.4f} {0} Took: {2:.3f} seconds'
               .format(' ' * 3, avg_loss, delta_t))
-        return step, dice_loss
+        return step, avg_loss
 
-    def test_once(self, sess, sup_test_init, writer, step, caller):
+    def test_once(self, sess, disc_test_init, writer, step, caller):
         """ Test the model once """
         start_time = time.time()
 
         # initialize data set iterators:
-        sess.run(sup_test_init)
+        sess.run(disc_test_init)
 
-        total_dice_score = 0
+        total_disc_loss = 0
+        total_unsup_loss = 0
         n_batches = 0
         try:
             while True:
                 caller.on_batch_begin(training_state=False, **self.callbacks_kwargs)
 
-                dice_3chs, images_summaries = sess.run([self.dice_3chs, self.sup_test_images_summary_op],
-                                                       feed_dict={self.is_training: False})
-                total_dice_score += dice_3chs
-                writer.add_summary(images_summaries, global_step=step)
-
+                unsup_loss, disc_loss = self._eval_all_op(sess, writer, step)
+                total_disc_loss += disc_loss
+                total_unsup_loss += unsup_loss
+                step += 1
                 n_batches += 1
 
         except tf.errors.OutOfRangeError:
             # End of the test set. Compute statistics here:
-            avg_dice = total_dice_score / n_batches
+            avg_loss = (total_unsup_loss + total_disc_loss) / n_batches
             delta_t = time.time() - start_time
 
             step += 1
-            value = summary_pb2.Summary.Value(tag="y_TEST/test/dice_3channels_avg", simple_value=avg_dice)
+            value = summary_pb2.Summary.Value(tag="y_TEST/test/loss_avg", simple_value=avg_loss)
             summary = summary_pb2.Summary(value=[value])
             writer.add_summary(summary, global_step=step)
             pass
@@ -573,11 +537,11 @@ class Model(DatasetInterfaceWrapper):
         # update global epoch counter:
         sess.run(self.update_g_test_step, feed_dict={'update_value:0': step})
 
-        print('\033[31m  TEST\033[0m:{0}{0} \033[1;33m average dice = {1:.4f}\033[0m on \033[1;33m{2}\033[0m batches '
-              '{0} Took: {3:.3f} seconds'.format(' ' * 3, avg_dice, n_batches, delta_t))
+        print('\033[31m  TEST\033[0m:{0}{0} \033[1;33m average loss = {1:.4f}\033[0m on \033[1;33m{2}\033[0m batches '
+              '{0} Took: {3:.3f} seconds'.format(' ' * 3, avg_loss, n_batches, delta_t))
         return step
 
-    def test(self, input_data):
+    def test(self, image_data, texture_data, label_data):
         """ Test the model on input_data """
         if self.standardize:
             print('Remember to standardize your data!')
@@ -589,10 +553,17 @@ class Model(DatasetInterfaceWrapper):
             ckpt = tf.train.get_checkpoint_state(os.path.dirname(self.checkpoint_dir + '/checkpoint'))
             if ckpt and ckpt.model_checkpoint_path:
                 saver.restore(sess, ckpt.model_checkpoint_path)
-                print('Returning: (soft anatomy, hard anatomy, predicted mask)')
-                output = sess.run([self.sup_soft_anatomy, self.sup_hard_anatomy,
-                                   self.sup_pred_mask, self.sup_reconstruction],
-                                  feed_dict={self.sup_input_data: input_data, self.is_training: False})
+                print('Returning: (soft anatomy, hard anatomy, texture_rec, texture_output, '
+                      'label_rec, label_output, image_rec)')
+                output = sess.run([self.disc_soft_anatomy, self.disc_hard_anatomy,
+                                   self.texture_rec, self.texture_output,
+                                   self.label_rec, self.label_output,
+                                   self.unsup_reconstruction],
+                                  feed_dict={self.unsup_input_data: image_data,
+                                             self.disc_texture_data: texture_data,
+                                             self.disc_image_data: image_data,
+                                             self.disc_label_data: label_data,
+                                             self.is_training: False})
                 return output
             else:
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
@@ -617,10 +588,20 @@ class Model(DatasetInterfaceWrapper):
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
 
-            saver = tf.train.Saver()  # keep_checkpoint_every_n_hours=2
+            # to continue last training
+            saver = tf.train.Saver()
             ckpt = tf.train.get_checkpoint_state(os.path.dirname(self.last_checkpoint_dir + '/checkpoint'))
             if ckpt and ckpt.model_checkpoint_path:
                 saver.restore(sess, ckpt.model_checkpoint_path)
+            else:  # to train the main model from scratch
+                # restore AE
+                variables = tf.contrib.framework.get_variables_to_restore()
+                variables_to_restore = [v for v in variables if
+                                        v.name.split('/')[0] == 'texture_ae' or v.name.split('/')[0] == 'label_ae']
+                ae_saver = tf.train.Saver(variables_to_restore)  # keep_checkpoint_every_n_hours=2
+                ckpt_ae = tf.train.get_checkpoint_state(os.path.dirname(self.ae_checkpoint_dir + '/checkpoint'))
+                if ckpt_ae and ckpt_ae.model_checkpoint_path:
+                    ae_saver.restore(sess, ckpt_ae.model_checkpoint_path)
 
             trained_epochs = self.g_epoch.eval()  # global step is also saved in checkpoint
             print("Model already trained for \033[94m{0}\033[0m epochs.".format(trained_epochs))
@@ -651,15 +632,13 @@ class Model(DatasetInterfaceWrapper):
                 seed = global_ep
 
                 # TRAINING ------------------------------------------
-                iterator_init_list = [self.sup_train_init,
-                                      self.disc_train_init,
+                iterator_init_list = [self.disc_train_init,
                                       self.unsup_train_init]
                 t_step = self.train_one_epoch(sess, iterator_init_list, writer, t_step, caller, seed)
 
                 # VALIDATION ------------------------------------------
                 if global_ep >= 15 or not ((global_ep + 1) % 5):  # when to evaluate the model
-                    iterator_init_list = [self.sup_valid_init,
-                                          self.disc_valid_init,
+                    iterator_init_list = [self.disc_valid_init,
                                           self.unsup_valid_init]
                     v_step, val_loss = self.eval_once(sess, iterator_init_list, writer, v_step, caller)
                     self.callbacks_kwargs['es_loss'] = val_loss
@@ -690,7 +669,7 @@ class Model(DatasetInterfaceWrapper):
             if ckpt and ckpt.model_checkpoint_path:
                 saver.restore(sess, ckpt.model_checkpoint_path)
 
-            _ = self.test_once(sess, self.sup_test_init, writer, test_step, caller)
+            _ = self.test_once(sess, self.disc_test_init, writer, test_step, caller)
 
         writer.close()
 

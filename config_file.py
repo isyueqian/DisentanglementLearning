@@ -14,8 +14,8 @@
 
 import tensorflow as tf
 
-RUN_ID = 'seg-supervised-0409z'
-AE_RUN_ID = 'auto-encoder-sure'
+RUN_ID = 'M-fixOutput-100D'
+AE_RUN_ID = 'auto-encoder-new0420'
 
 CUDA_VISIBLE_DEVICE = 0
 
@@ -40,6 +40,9 @@ def define_flags():
     tf.flags.DEFINE_integer('n_frame_composing_masks', 8, "number composing masks for next frame mask prediction")
     tf.flags.DEFINE_integer('nz_latent', 8, "number latent variable for z code (encoder modality)")
     tf.flags.DEFINE_integer('CUDA_VISIBLE_DEVICE', CUDA_VISIBLE_DEVICE, "visible gpu")
+    tf.flags.DEFINE_integer('label_ae_filters', 64, "num of root filters of label auto-encoder")
+    tf.flags.DEFINE_integer('texture_ae_filters', 64, "num of root filters of texture auto-encoder")
+    tf.flags.DEFINE_integer('disc_times', 100, "num of training discriminators after training generator once")
 
     # ____________________________________________________ #
     # =============== TRAINING STRATEGY ================== #

@@ -24,8 +24,8 @@ if __name__ == '__main__':
     print(texture_rec.shape)
     print(label_rec.shape)
 
-    np.save("tmp/texture_rec.npy", texture_rec)
-    np.save("tmp/label_rec.npy", label_rec)
+    np.save("tmp/fine-tune-output/texture_rec.npy", texture_rec)
+    np.save("tmp/fine-tune-output/label_rec.npy", label_rec)
 
 
 

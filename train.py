@@ -6,7 +6,7 @@ import tensorflow as tf
 tf.random.set_random_seed(1234)
 from model import Model
 
-N_EPOCHS = 10
+N_EPOCHS = 20
 
 # ----------------
 

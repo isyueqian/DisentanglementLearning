@@ -66,6 +66,7 @@ class UNet(object):
         self.is_training = is_training
         self.nf = n_filters
         self.name = name
+        self.code = None
 
     def build(self):
         """
@@ -94,6 +95,7 @@ class UNet(object):
 
         with tf.variable_scope('Bottleneck'):
             code = self._bottleneck_brick(en_brick_3, 16 * self.nf, self.is_training, scope='code')
+            self.code = code
 
         return en_brick_0, concat_0, en_brick_1, concat_1, en_brick_2, concat_2, en_brick_3, concat_3, code
 
