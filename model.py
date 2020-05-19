@@ -18,6 +18,7 @@ import errno
 from idas.utils import ProgressBar
 import random
 import numpy as np
+from my_utils import get_score
 
 
 class Model(DatasetInterfaceWrapper):
@@ -45,6 +46,7 @@ class Model(DatasetInterfaceWrapper):
         self.label_ae_filters = FLAGS.label_ae_filters
         self.texture_ae_filters = FLAGS.texture_ae_filters
         self.disc_times = FLAGS.disc_times
+        self.n_ch_out = FLAGS.n_ch_out
 
         # -----------------------------
         # Data
@@ -55,6 +57,7 @@ class Model(DatasetInterfaceWrapper):
 
         # ACDC data set
         self.acdc_data_path = FLAGS.acdc_data_path  # list of path for the training and validation files:
+        self.cub_data_path = FLAGS.cub_data_path
 
         # data pre-processing
         self.augment = FLAGS.augment  # perform data augmentation
@@ -132,13 +135,22 @@ class Model(DatasetInterfaceWrapper):
 
         self.global_seed = tf.placeholder(tf.int64, shape=())
 
-        self.disc_train_init, self.disc_valid_init, self.disc_test_init, \
-        self.disc_image_data, self.disc_label_data, self.disc_label_data_oh, self.disc_texture_data = \
-            super(Model, self).get_acdc_disc_data(data_path=self.acdc_data_path, repeat=False, seed=self.global_seed)
+        # self.disc_train_init, self.disc_valid_init, self.disc_test_init, \
+        # self.disc_image_data, self.disc_label_data, self.disc_label_data_oh, self.disc_texture_data = \
+        #     super(Model, self).get_acdc_disc_data(data_path=self.acdc_data_path, repeat=False, seed=self.global_seed)
+        #
+        # self.unsup_train_init, self.unsup_valid_init, \
+        # self.unsup_input_data, self.unsup_output_data = \
+        #     super(Model, self).get_acdc_unsup_data(data_path=self.acdc_data_path, repeat=True, seed=self.global_seed)
 
-        self.unsup_train_init, self.unsup_valid_init, \
+        self.disc_train_init, self.disc_valid_init, self.disc_test_init, \
+        self.disc_image_data, self.disc_label_data, self.disc_texture_data = \
+            super(Model, self).get_cub_disc_data(data_path=self.cub_data_path, repeat=False, seed=self.global_seed)
+
+        self.unsup_train_init, self.unsup_valid_init, self.unsup_test_init,\
         self.unsup_input_data, self.unsup_output_data = \
-            super(Model, self).get_acdc_unsup_data(data_path=self.acdc_data_path, repeat=True, seed=self.global_seed)
+            super(Model, self).get_cub_unsup_data(data_path=self.cub_data_path, repeat=True, seed=self.global_seed)
+
 
     def define_model(self):
         """ Define the network architecture.
@@ -160,9 +172,9 @@ class Model(DatasetInterfaceWrapper):
         sdnet_unsup = sdnet_unsup.build(self.unsup_input_data, reuse=True)
 
         # the auto-encoder-sure model
-        texture_ae = AE(n_out=1, is_training=False, n_filters=self.texture_ae_filters, name='texture_ae', trainable=False)
+        texture_ae = AE(n_out=self.n_ch_out, is_training=False, n_filters=self.texture_ae_filters, name='texture_ae', trainable=False)
 
-        label_ae = AE(n_out=1, is_training=False, n_filters=self.label_ae_filters, name='label_ae', trainable=False)
+        label_ae = AE(n_out=self.n_ch_out, is_training=False, n_filters=self.label_ae_filters, name='label_ae', trainable=False)
 
         # - - - - - - -
         # define tensors for the losses:
@@ -184,11 +196,19 @@ class Model(DatasetInterfaceWrapper):
         self.label_rec = label_ae.build_output(self.label_rec_decoder, reuse=True)
 
         texture_code_shape = tf.constant(np.array([self.batch_size,
-                                                   np.power(self.nz_latent, 1/3),
-                                                   np.power(self.nz_latent, 1/3),
-                                                   np.power(self.nz_latent, 1/3)], dtype=np.int32))
+                                                   np.round(np.power(self.nz_latent, 1/3)),
+                                                   np.round(np.power(self.nz_latent, 1/3)),
+                                                   np.round(np.power(self.nz_latent, 1/3))], dtype=np.int32))
+        print(self.nz_latent)
+        sess_tmp = tf.Session()
+        with sess_tmp.as_default():
+            print(texture_code_shape.eval())
         self.texture_code = tf.reshape(self.unsup_sampled_z, texture_code_shape)
-        self.texture_code = tf.tile(self.texture_code, [1, 1, 1, self.texture_ae_filters*8])
+        self.texture_code = tf.tile(self.texture_code, [1, 1, 1, 64])
+        # texture_code in AE with the shape of [7, 2, 2, 1024]
+        texture_code_ae_shape = tf.constant(np.array([7, 2, 2, 1024], dtype=np.int32))
+        self.texture_code = tf.reshape(self.texture_code, texture_code_ae_shape)
+
         print("texture_code.shape: ", self.texture_code.shape)
         self.texture_rec_decoder = texture_ae.build_decoder(self.texture_code, reuse=True)
 
@@ -271,10 +291,10 @@ class Model(DatasetInterfaceWrapper):
 
         # define weights for the cost contributes:
         w_kl = 0.1
-        w_image_rec = 1.0
+        w_image_rec = 1.0   # adding more weight on image rec does not have much improvement
         w_z_rec = 1.0
-        w_label_rec = 1.0
-        w_texture_rec = 1.0
+        w_label_rec = 10.0
+        w_texture_rec = 10.0
         w_adv = 10.0
 
         # define losses for unsupervised and discriminator prediction steps:
@@ -282,9 +302,9 @@ class Model(DatasetInterfaceWrapper):
                           w_image_rec * self.unsup_image_rec_loss + \
                           w_z_rec * self.unsup_z_regress_loss + \
                           w_adv * self.label_adv_gen_loss + \
-                          w_adv * self.texture_adv_gen_loss  \
-                          # w_label_rec * self.label_rec_loss + \
-                          # w_texture_rec * self.texture_rec_loss
+                          w_adv * self.texture_adv_gen_loss +  \
+                          w_label_rec * self.label_rec_loss + \
+                          w_texture_rec * self.texture_rec_loss
 
         self.discriminator_loss = w_adv * self.label_adv_disc_loss + \
                                   w_adv * self.texture_adv_disc_loss
@@ -314,7 +334,7 @@ class Model(DatasetInterfaceWrapper):
 
             return train_op
 
-        clip = False  # todo: try true
+        clip = True
         optimizer = tf.train.AdamOptimizer(self.lr)
 
         self.train_op_unsup = _train_op_wrapper(self.unsup_loss, optimizer, clip)
@@ -334,8 +354,7 @@ class Model(DatasetInterfaceWrapper):
         """
         Evaluate the model on the current batch
         """
-        # todo: insert a metric later
-        return
+        self.batch_dice, self.batch_miou = get_score(self.label_rec, self.disc_label_data)
 
     def define_summaries(self):
         """
@@ -390,16 +409,17 @@ class Model(DatasetInterfaceWrapper):
             self.weights_summary = tf.summary.merge(weights_summary)
 
     def _train_all_op(self, sess, writer, step):
-        _, usl, dl, scalar_summaries = sess.run([self.global_train_op,
-                                                 self.unsup_loss,
-                                                 self.discriminator_loss,
-                                                 self.train_scalar_summary_op],
-                                                feed_dict={self.is_training: True})
+        _, usl, dl, scalar_summaries, dice, miou = sess.run([self.global_train_op,
+                                                             self.unsup_loss,
+                                                             self.discriminator_loss,
+                                                             self.train_scalar_summary_op,
+                                                             self.batch_dice, self.batch_miou],
+                                                            feed_dict={self.is_training: True})
 
         if random.randint(0, self.train_summaries_skip) == 0:
             writer.add_summary(scalar_summaries, global_step=step)
 
-        return usl, dl
+        return usl, dl, dice, miou
 
     def train_one_epoch(self, sess, iterator_init_list, writer, step, caller, seed):
         """ train the model for one epoch. """
@@ -420,6 +440,9 @@ class Model(DatasetInterfaceWrapper):
 
         total_disc_loss = 0
         total_unsup_loss = 0
+
+        total_dice = 0
+        total_miou = 0
         n_batches = 0
 
         try:
@@ -428,15 +451,18 @@ class Model(DatasetInterfaceWrapper):
 
                 caller.on_batch_begin(training_state=True, **self.callbacks_kwargs)
 
-                unsup_loss, disc_loss = self._train_all_op(sess, writer, step)
+                unsup_loss, disc_loss, dice, miou = self._train_all_op(sess, writer, step)
                 total_disc_loss += disc_loss
                 total_unsup_loss += unsup_loss
+                total_dice += dice
+                total_miou += miou
                 step += 1
 
                 n_batches += 1
                 if (n_batches % self.skip_step) == 0:
-                    print('\r  ...training over batch {1}: {0} batch_disc_loss = {2:.4f}\tbatch_unsup_loss = {3:.4f} {0}'
-                          .format(' ' * 3, n_batches, disc_loss, unsup_loss), end='\n')
+                    print('\r  ...training over batch {1}: {0} batch_disc_loss = {2:.4f}\tbatch_unsup_loss = {3:.4f} {0}\n'
+                          '\r  ...metrics: batch dice score = {4:.4f}\tbatch miou score = {5:.4f} {0}'
+                          .format(' ' * 3, n_batches, disc_loss, unsup_loss, dice, miou), end='\n')
 
                 caller.on_batch_end(training_state=True, **self.callbacks_kwargs)
 
@@ -444,6 +470,8 @@ class Model(DatasetInterfaceWrapper):
             # End of the epoch. Compute statistics here:
             total_loss = total_disc_loss + total_unsup_loss
             avg_loss = total_loss / n_batches
+            avg_dice = total_dice / n_batches
+            avg_miou = total_miou / n_batches
             delta_t = time.time() - start_time
 
         # update global epoch counter:
@@ -454,17 +482,19 @@ class Model(DatasetInterfaceWrapper):
         self.progress_bar.detach()
         self.progress_bar.update_lta(delta_t)
 
-        print('\033[31m  TRAIN\033[0m:{0}{0} average loss = {1:.4f} {0} Took: {2:.3f} seconds'
-              .format(' ' * 3, avg_loss, delta_t))
+        print('\033[31m  TRAIN\033[0m:{0} {0} average loss = {1:.4f} {0}, average dice = {2:.4f} {0}, '
+              'average miou = {3:.4f} {0}. Took: {4:.3f} seconds'
+              .format(' ' * 3, avg_loss, avg_dice, avg_miou, delta_t))
         return step
 
     def _eval_all_op(self, sess, writer, step):
-        usl, dsl, unsup_im_summ= \
+        usl, dsl, unsup_im_summ, dice, miou= \
             sess.run([self.unsup_loss, self.discriminator_loss,
-                      self.valid_images_summary_op],
+                      self.valid_images_summary_op,
+                      self.batch_dice, self.batch_miou],
                      feed_dict={self.is_training: False})
         writer.add_summary(unsup_im_summ, global_step=step)
-        return usl, dsl
+        return usl, dsl, dice, miou
 
     def eval_once(self, sess, iterator_init_list, writer, step, caller):
         """ Eval the model once """
@@ -476,14 +506,19 @@ class Model(DatasetInterfaceWrapper):
 
         total_disc_loss = 0
         total_unsup_loss = 0
+        total_dice = 0
+        total_miou = 0
+
         n_batches = 0
         try:
             while True:
                 caller.on_batch_begin(training_state=False, **self.callbacks_kwargs)
 
-                unsup_loss, disc_loss = self._eval_all_op(sess, writer, step)
+                unsup_loss, disc_loss, dice, miou = self._eval_all_op(sess, writer, step)
                 total_disc_loss += disc_loss
                 total_unsup_loss += unsup_loss
+                total_dice += dice
+                total_miou += miou
                 step += 1
 
                 n_batches += 1
@@ -493,39 +528,50 @@ class Model(DatasetInterfaceWrapper):
             # End of the validation set. Compute statistics here:
             total_loss = total_disc_loss + total_unsup_loss
             avg_loss = total_loss / n_batches
+            avg_dice = total_dice / n_batches
+            avg_miou = total_miou / n_batches
             delta_t = time.time() - start_time
             pass
 
         # update global epoch counter:
         sess.run(self.update_g_valid_step, feed_dict={'update_value:0': step})
 
-        print('\033[31m  VALIDATION\033[0m:  average loss = {1:.4f} {0} Took: {2:.3f} seconds'
-              .format(' ' * 3, avg_loss, delta_t))
+        print('\033[31m  VALIDATION\033[0m:  average loss = {1:.4f} {0}, average dice = {2:.4f} {0}, '
+              'average miou = {3:.4f} {0}. Took: {4:.3f} seconds'
+              .format(' ' * 3, avg_loss, avg_dice, avg_miou, delta_t))
         return step, avg_loss
 
-    def test_once(self, sess, disc_test_init, writer, step, caller):
+    def test_once(self, sess, iterator_init_list, writer, step, caller):
         """ Test the model once """
         start_time = time.time()
 
         # initialize data set iterators:
-        sess.run(disc_test_init)
+        for init in iterator_init_list:
+            sess.run(init)
 
         total_disc_loss = 0
         total_unsup_loss = 0
+        total_dice = 0
+        total_miou = 0
+
         n_batches = 0
         try:
             while True:
                 caller.on_batch_begin(training_state=False, **self.callbacks_kwargs)
 
-                unsup_loss, disc_loss = self._eval_all_op(sess, writer, step)
+                unsup_loss, disc_loss, dice, miou = self._eval_all_op(sess, writer, step)
                 total_disc_loss += disc_loss
                 total_unsup_loss += unsup_loss
+                total_dice += dice
+                total_miou += miou
                 step += 1
                 n_batches += 1
 
         except tf.errors.OutOfRangeError:
             # End of the test set. Compute statistics here:
             avg_loss = (total_unsup_loss + total_disc_loss) / n_batches
+            avg_dice = total_dice / n_batches
+            avg_miou = total_miou / n_batches
             delta_t = time.time() - start_time
 
             step += 1
@@ -537,8 +583,9 @@ class Model(DatasetInterfaceWrapper):
         # update global epoch counter:
         sess.run(self.update_g_test_step, feed_dict={'update_value:0': step})
 
-        print('\033[31m  TEST\033[0m:{0}{0} \033[1;33m average loss = {1:.4f}\033[0m on \033[1;33m{2}\033[0m batches '
-              '{0} Took: {3:.3f} seconds'.format(' ' * 3, avg_loss, n_batches, delta_t))
+        print('\033[31m  TEST\033[0m:{0}{0} \033[1;33m average loss = {1:.4f} {0}, average dice = {2:.4f} {0}, '
+              'average miou = {3:.4f} {0}. Took: {4:.3f} seconds'
+              .format(' ' * 3, avg_loss, avg_dice, avg_miou, delta_t))
         return step
 
     def test(self, image_data, texture_data, label_data):
@@ -558,7 +605,7 @@ class Model(DatasetInterfaceWrapper):
                 output = sess.run([self.disc_soft_anatomy, self.disc_hard_anatomy,
                                    self.texture_rec, self.texture_output,
                                    self.label_rec, self.label_output,
-                                   self.unsup_reconstruction],
+                                   self.unsup_reconstruction, self.unsup_sampled_z],
                                   feed_dict={self.unsup_input_data: image_data,
                                              self.disc_texture_data: texture_data,
                                              self.disc_image_data: image_data,
@@ -669,7 +716,7 @@ class Model(DatasetInterfaceWrapper):
             if ckpt and ckpt.model_checkpoint_path:
                 saver.restore(sess, ckpt.model_checkpoint_path)
 
-            _ = self.test_once(sess, self.disc_test_init, writer, test_step, caller)
+            _ = self.test_once(sess, [self.disc_test_init, self.unsup_test_init], writer, test_step, caller)
 
         writer.close()
 
@@ -678,4 +725,4 @@ if __name__ == '__main__':
     print('\n' + '-' * 3)
     model = Model()
     model.build()
-    model.train(n_epochs=2)
+    model.train(n_epochs=1)

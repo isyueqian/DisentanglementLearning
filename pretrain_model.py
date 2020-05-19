@@ -33,11 +33,13 @@ class AEModel(DatasetInterfaceWrapper):
         self.lr = tf.Variable(FLAGS.lr, dtype=tf.float32, trainable=False, name='learning_rate')
         self.batch_size = FLAGS.b_size
         self.nz_latent = FLAGS.nz_latent  # to control the dimension of latent code
+        self.n_ch_out = FLAGS.n_ch_out
 
         # -----------------------------
         # Data
         self.label_input_size = FLAGS.input_size
         self.acdc_data_path = FLAGS.acdc_data_path  # list of path for the training and validation files:
+        self.cub_data_path = FLAGS.cub_data_path
         self.augment = FLAGS.augment  # perform data augmentation
         self.standardize = FLAGS.standardize  # perform data standardization
 
@@ -114,9 +116,14 @@ class AEModel(DatasetInterfaceWrapper):
         :return:
         """
         self.global_seed = tf.placeholder(tf.int64, shape=())
-        self.train_init, self.valid_init, self.test_init, self.texture_data, self.label_data = \
-            super(AEModel, self).get_acdc_texture_shape_data(data_path=self.acdc_data_path,
-                                                             repeat=False, seed=self.global_seed)
+        # self.train_init, self.valid_init, self.test_init, self.texture_data, self.label_data = \
+        #     super(AEModel, self).get_acdc_texture_shape_data(data_path=self.acdc_data_path,
+        #                                                      repeat=False, seed=self.global_seed)
+
+        self.train_init, self.valid_init, self.test_init, \
+        self.image_data, self.label_data, self.texture_data = \
+            super(AEModel, self).get_cub_disc_data(data_path=self.cub_data_path,
+                                                   repeat=False, seed=self.global_seed)
 
     def define_model(self):
         """
@@ -126,10 +133,10 @@ class AEModel(DatasetInterfaceWrapper):
         :return:
         """
 
-        texture_ae = AE(n_out=1, is_training=self.is_training, n_filters=128, name='texture_ae', trainable=True)
+        texture_ae = AE(n_out=self.n_ch_out, is_training=self.is_training, n_filters=64, name='texture_ae', trainable=True)
         self.texture_output = texture_ae.build(self.texture_data)
 
-        label_ae = AE(n_out=1, is_training=self.is_training, n_filters=64, name='label_ae', trainable=True)
+        label_ae = AE(n_out=self.n_ch_out, is_training=self.is_training, n_filters=64, name='label_ae', trainable=True)
         self.label_output = label_ae.build(self.label_data, reuse=False)
 
     def define_losses(self):
@@ -270,6 +277,10 @@ class AEModel(DatasetInterfaceWrapper):
                           .format(' ' * 3, n_batches, texture_loss, label_loss), end='\n')
 
                 caller.on_batch_end(training_state=True, **self.callbacks_kwargs)
+
+                # print("Batch: ", n_batches)
+                # print("total_texture_loss: ", total_texture_loss)
+                # print("total_label_loss: ", total_label_loss)
 
         except tf.errors.OutOfRangeError:
             texture_avg_loss = total_texture_loss / n_batches
@@ -533,4 +544,4 @@ if __name__ == '__main__':
     print('\n' + '-' * 3)
     model = AEModel()
     model.build()
-    model.train(n_epochs=15)
+    model.train(n_epochs=20)

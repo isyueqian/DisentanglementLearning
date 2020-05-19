@@ -105,6 +105,8 @@ class SDNet(object):
             # - - - - - - -
             # build Decoder to reconstruct the input given sampled z and the hard anatomy
             self.reconstruction, _ = self.build_decoder(self.sampled_z, self.hard_anatomy)
+            print(input_image.shape)
+            print(self.reconstruction.shape)
 
             # - - - - - - -
             # estimate back z_sample from the reconstructed image (only anatomy may be changed, no modality factors)

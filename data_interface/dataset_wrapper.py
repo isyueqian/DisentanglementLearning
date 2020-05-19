@@ -19,6 +19,8 @@ from data_interface.interfaces.acdc_sup_interface import DatasetInterface as ACD
 from data_interface.interfaces.acdc_disc_interface import DatasetInterface as ACDCDiscInterface
 from data_interface.interfaces.acdc_unsup_interface import DatasetInterface as ACDCUnsupInterface
 from data_interface.interfaces.acdc_texture_interface import DatasetInterface as ACDCTextureInterface
+from data_interface.interfaces.cub_disc_interface import DatasetInterface as CUBDiscInterface
+from data_interface.interfaces.cub_unsup_interface import DatasetInterface as CUBUnsupInterface
 
 
 class DatasetInterfaceWrapper(object):
@@ -133,3 +135,52 @@ class DatasetInterfaceWrapper(object):
         )
 
         return train_init, valid_init, input_data, output_data
+
+    def get_cub_disc_data(self, data_path, repeat=False, seed=None):
+        """
+        wrapper to CUB data set. Gets input images and annotated masks.
+        :param data_path: (str) path to data directory
+        :param repeat: (bool) whether to repeat the input indefinitely
+        :param seed: (int or placeholder) seed for the random operations
+        :return: iterator initializer for train valid, and test data; input and output frame; time and delta time.
+        """
+        print('Define input pipeline for CUB adversarial discriminator data...')
+
+        # initialize data set interfaces
+        cub_itf = CUBDiscInterface(data_path, self.input_size)
+
+        train_init, valid_init, test_init, image_data, label_data, texture_data = cub_itf.get_data(
+            b_size=self.batch_size,
+            augment=self.augment,
+            standardize=self.standardize,
+            repeat=repeat,
+            num_threads=self.num_threads,
+            seed=seed
+        )
+        return train_init, valid_init, test_init, image_data, label_data, texture_data
+
+    def get_cub_unsup_data(self, data_path, repeat=False, seed=None):
+        """
+        wrapper to CUB data set. Gets input images without ground truth mask. Notice that output_data is just an alias
+        for input_data
+        :param data_path: (str) path to data directory
+        :param repeat: (bool) whether to repeat the input indefinitely
+        :param seed: (int or placeholder) seed for the random operations
+        :return: iterator initializer for train and valid data; input and output frame; time and delta time.
+        """
+        print('Define input pipeline for unsupervised data...')
+
+        # initialize data set interfaces
+        cub_itf = CUBUnsupInterface(data_path, self.input_size)
+
+        train_init, valid_init, test_init, input_data, output_data = cub_itf.get_data(
+            b_size=self.batch_size,
+            augment=self.augment,
+            standardize=self.standardize,
+            repeat=repeat,
+            num_threads=self.num_threads,
+            seed=seed
+        )
+
+        return train_init, valid_init, test_init, input_data, output_data
+

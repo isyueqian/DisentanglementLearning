@@ -29,6 +29,18 @@ def eval_dice(seg, gt):
     return dice
 
 
+def eval_miou(seg, gt):
+    """
+    calculate mean iou of segmentation mask and ground truth mask
+    :param seg:
+    :param gt:
+    :return:
+    """
+    numerator = np.sum(seg[gt == 1])
+    miou = numerator / (np.sum(seg) + np.sum(gt) - numerator)
+    return miou
+
+
 def true_false_positives_negatives(true, pred, normalize=False):
     """
     Returns true positive, false positives, false negatives and true positives.

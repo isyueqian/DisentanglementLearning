@@ -23,16 +23,17 @@ b_init = tf.zeros_initializer()
 
 class Decoder(object):
 
-    def __init__(self, z_factors, encoded_anatomy, n_channels, is_training, output='tanh', name='Decoder'):
+    def __init__(self, z_factors, encoded_anatomy, anatomical_channels, is_training, n_ch_out=1, output='tanh', name='Decoder'):
         """
         Decoder that generates an image by combining an anatomical and a modality representation.
         :param z_factors: (tensor) incoming tensor with the modality representation
         :param encoded_anatomy: (tensor) incoming tensor with input anatomy information
-        :param n_channels: (int) number of anatomical channels
+        :param anatomical_channels: (int) number of anatomical channels
         :param is_training: (tf.placeholder(dtype=tf.bool) or bool) variable to define training or test mode; it is
                         needed for the behaviour of dropout, batch normalization, ecc. (which behave differently
                         at train and test time)
         :param output: (string) output activation function, defaults to 'tanh' (according to original paper)
+        :param n_ch_out: output reconstruction channels
         :param name: (string) name scope for the unet
 
         - - - - - - - - - - - - - - - -
@@ -49,7 +50,8 @@ class Decoder(object):
         """
         self.z_factors = z_factors
         self.encoded_anatomy = encoded_anatomy
-        self.n_channels = n_channels
+        self.n_channels = anatomical_channels
+        self.n_ch_out = n_ch_out
         self.is_training = is_training
         self.name = name
 
@@ -70,7 +72,7 @@ class Decoder(object):
                 film3 = self._film_layer(film2, self.z_factors, scope='_film_layer_2')
                 film4 = self._film_layer(film3, self.z_factors, scope='_film_layer_3')
 
-            self.reconstruction = layers.conv2d(film4, filters=1, kernel_size=3, strides=1, padding='same')
+            self.reconstruction = layers.conv2d(film4, filters=self.n_ch_out, kernel_size=3, strides=1, padding='same')
 
             if self.output == 'tanh':
                 self.reconstruction = tf.nn.tanh(self.reconstruction)

@@ -42,8 +42,8 @@ def dice_coe(output, target, axis=(1, 2, 3), smooth=1e-12):
 
     """
 
-    assert output.dtype in [tf.float32, tf.float64]
-    assert target.dtype in [tf.float32, tf.float64]
+    # assert output.dtype in [tf.float32, tf.float64]
+    # assert target.dtype in [tf.float32, tf.float64]
 
     intersection = tf.reduce_sum(output * target, axis=axis)
 
@@ -52,6 +52,36 @@ def dice_coe(output, target, axis=(1, 2, 3), smooth=1e-12):
 
     score = (2. * intersection + smooth) / (a + b + smooth)
     score = tf.reduce_mean(score, name='dice_coe')
+    return score
+
+
+def miou_score(output, target, axis=(1, 2, 3), smooth=1e-12):
+    """calculate mean IOU score for comparing the similarity
+    of two batch of data, usually be used for binary image segmentation
+    i.e. labels are binary. The coefficient between 0 to 1, 1 means totally match.
+
+    Parameters
+    -----------
+    output : Tensor
+        A distribution with shape: [batch_size, ....], (any dimensions).
+    target : Tensor
+        The target distribution, format the same with `output`.
+    axis : tuple of int
+        All dimensions are reduced, default ``[1,2,3]``.
+    smooth : float
+        This small value will be added to the numerator and denominator.
+    """
+
+    # assert output.dtype in [tf.float32, tf.float64]
+    # assert target.dtype in [tf.float32, tf.float64]
+
+    intersection = tf.reduce_sum(output * target, axis=axis)
+
+    a = tf.reduce_sum(output, axis=axis)
+    b = tf.reduce_sum(target, axis=axis)
+
+    score = (intersection + smooth) / (a + b - intersection + smooth)
+    score = tf.reduce_mean(score, name='miou')
     return score
 
 
@@ -80,8 +110,8 @@ def generalized_dice_coe(output, target, axis=(1, 2, 3), smooth=1e-12):
 
     """
 
-    assert output.dtype in [tf.float32, tf.float64]
-    assert target.dtype in [tf.float32, tf.float64]
+    # assert output.dtype in [tf.float32, tf.float64]
+    # assert target.dtype in [tf.float32, tf.float64]
 
     intersection = tf.reduce_sum(output * target, axis=axis[:-1])
     a = tf.reduce_sum(output, axis=axis[:-1])

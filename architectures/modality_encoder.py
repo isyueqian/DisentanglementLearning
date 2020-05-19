@@ -100,7 +100,7 @@ class ModalityEncoder(object):
         input_data = self.input_data
         self.input_data = incoming
 
-        model = self.build(reuse)
+        model = self.build(reuse=reuse)
         z_regress, _ = model.get_z_stats()
         self.input_data = input_data
 
